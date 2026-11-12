@@ -4,6 +4,7 @@ import { api } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
 import { fmtDate, TierBadge } from '../components/Pickers'
+import { Check, FileX, PenSquare } from 'lucide-react'
 
 type Item = { page_id: number; document_id: number; title: string; tier: string; page_no: number; received_at: string; flagged: { stage: string; tier: string; method: string }[] }
 
@@ -17,6 +18,7 @@ export default function ReviewPage() {
   const [detail, setDetail] = useState<any>(null)
   const load = useCallback(() => api<Item[]>(`/api/review?include_medium=${medium}`).then((r) => { setItems(r); setIdx((i) => Math.min(i, Math.max(0, r.length - 1))) }), [medium])
   useEffect(() => { load() }, [load])
+  useEffect(() => { window.addEventListener('soroka:reload', load); return () => window.removeEventListener('soroka:reload', load) }, [load])
   const cur = items[idx]
   useEffect(() => { setDetail(null); if (cur) api(`/api/pages/${cur.page_id}`).then(setDetail) }, [cur?.page_id])
 
@@ -77,9 +79,9 @@ export default function ReviewPage() {
         {cur && detail && (
           <div className="card col">
             <div className="row">
-              <button className="primary" onClick={() => act('accept')}>✓ {t('accept')} (a)</button>
-              <button onClick={() => act('open')}>{t('open_editor')} (e)</button>
-              <button className="danger" onClick={() => act('non_document')}>{t('not_document')} (n)</button>
+              <button className="primary" onClick={() => act('accept')}><Check size={15} /> {t('accept')} <kbd>a</kbd></button>
+              <button onClick={() => act('open')}><PenSquare size={15} /> {t('open_editor')} <kbd>e</kbd></button>
+              <button className="danger" onClick={() => act('non_document')}><FileX size={15} /> {t('not_document')} <kbd>n</kbd></button>
             </div>
             {cands.length > 1 && detail.original_url ? (
               <>

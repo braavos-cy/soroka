@@ -1,53 +1,95 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { ChevronDown, ChevronRight, Folder as FolderIcon, FolderOpen, FolderPlus, Library, Merge, Minus, Pencil, Plus, Settings2, Trash2 } from 'lucide-react'
 import { api, Folder, Tag } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
 import { Modal } from './Reauth'
+import { Menu, useDialog } from './ui'
+import { randomTagColor } from './Pickers'
 
 export const DND = 'application/x-soroka'
 
+/** Inline text input used for creating / renaming in place. Enter or blur commits, Escape cancels. */
+function InlineEdit({ value, onCommit, onCancel, maxLength = 300 }: { value: string; onCommit: (v: string) => void; onCancel: () => void; maxLength?: number }) {
+  const [v, setV] = useState(value)
+  const ref = useRef<HTMLInputElement>(null)
+  const done = useRef(false)
+  useEffect(() => { ref.current?.focus(); ref.current?.select() }, [])
+  const commit = () => {
+    if (done.current) return
+    done.current = true
+    if (v.trim() && v.trim() !== value) onCommit(v.trim()); else onCancel()
+  }
+  return (
+    <input ref={ref} className="inline-edit" value={v} onChange={(e) => setV(e.target.value)} maxLength={maxLength}
+      onClick={(e) => e.stopPropagation()} onBlur={commit}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter') { e.preventDefault(); commit() }
+        if (e.key === 'Escape') { e.preventDefault(); done.current = true; onCancel() }
+      }} />
+  )
+}
+
 export default function Sidebar() {
   const { t } = useT()
-  const { folders, tags, reload, toast } = useStore()
+  const { folders, tags, reload, toast, tagMaxLen } = useStore()
+  const dlg = useDialog()
   const [params] = useSearchParams()
   const nav = useNavigate()
   const loc = useLocation()
   const [open, setOpen] = useState<Record<number, boolean>>({})
+  const [editing, setEditing] = useState<number | null>(null)
+  const [newTag, setNewTag] = useState(false)
   const [manage, setManage] = useState(false)
   const sel = params.get('folder') ? Number(params.get('folder')) : null
   const children = useMemo(() => {
     const m = new Map<number | null, Folder[]>()
     folders.forEach((f) => { const k = f.parent_id; m.set(k, [...(m.get(k) || []), f]) })
-    m.forEach((arr) => arr.sort((a, b) => (b.is_system ? 1 : 0) - (a.is_system ? 1 : 0) || a.name.localeCompare(b.name)))
+    m.forEach((arr) => arr.sort((a, b) => a.name.localeCompare(b.name)))
     return m
   }, [folders])
 
-  const go = (mut: (p: URLSearchParams) => void) => {
-    const p = new URLSearchParams(loc.pathname === '/' || loc.pathname === '/rejected' || loc.pathname === '/trash' ? params : undefined)
+  const listView = ['/', '/rejected', '/trash'].includes(loc.pathname)
+  // tag filters apply to the current list (documents, rejected or trash); 'stay' = false always goes to documents
+  const go = (mut: (p: URLSearchParams) => void, stay = true) => {
+    const p = new URLSearchParams(listView ? params : undefined)
     mut(p)
-    const base = ['/rejected', '/trash'].includes(loc.pathname) ? loc.pathname : '/'
-    nav(base + '?' + p.toString())
+    const base = stay && ['/rejected', '/trash'].includes(loc.pathname) ? loc.pathname : '/'
+    const qs = p.toString()
+    nav(base + (qs ? '?' + qs : ''))
   }
-  const selectFolder = (id: number | null) => go((p) => { id == null ? p.delete('folder') : p.set('folder', String(id)) })
+  // folders (and All documents) always open the documents view
+  const selectFolder = (id: number | null) => go((p) => { id == null ? p.delete('folder') : p.set('folder', String(id)) }, false)
+  const onDocs = loc.pathname === '/'
 
+  // create immediately with a unique default name, then edit the name in place
   const createFolder = async (parent: number | null) => {
-    const name = prompt(t(parent ? 'new_subfolder' : 'new_folder'))
-    if (!name) return
-    try { await api('/api/folders', { body: { name, parent_id: parent } }); if (parent) setOpen({ ...open, [parent]: true }); reload() } catch (e: any) { toast(e.detail) }
+    const base = t('new_folder_name')
+    const taken = new Set((children.get(parent) || []).map((f) => f.name))
+    let name = base
+    for (let i = 2; taken.has(name); i++) name = `${base} ${i}`
+    try {
+      const r = await api('/api/folders', { body: { name, parent_id: parent } })
+      if (parent) setOpen((o) => ({ ...o, [parent]: true }))
+      setEditing(r.id)
+      reload()
+    } catch (e: any) { toast(e.detail) }
   }
-  const rename = async (f: Folder) => {
-    const name = prompt(t('rename'), f.name)
-    if (!name || name === f.name) return
+  const rename = async (f: Folder, name: string) => {
+    setEditing(null)
     try { await api(`/api/folders/${f.id}`, { method: 'PATCH', body: { name } }); reload() } catch (e: any) { toast(e.detail) }
   }
   const del = async (f: Folder) => {
     try { await api(`/api/folders/${f.id}`, { method: 'DELETE' }) } catch (e: any) {
-      if (e.status !== 409 || !confirm(t('confirm_delete_folder'))) return toast(e.detail)
-      await api(`/api/folders/${f.id}?confirm=true`, { method: 'DELETE' })
+      if (e.status !== 409) return toast(e.detail)
+      const ok = await dlg.confirm({ title: t('delete_folder_title').replace('{name}', f.name), message: t('confirm_delete_folder'), ok: t('delete'), danger: true })
+      if (!ok) return
+      try { await api(`/api/folders/${f.id}?confirm=true`, { method: 'DELETE' }) } catch (e2: any) { return toast(e2.detail) }
     }
     if (sel === f.id) selectFolder(null)
-    reload()
+    reload(); window.dispatchEvent(new Event('soroka:reload'))
   }
   const onDrop = async (e: React.DragEvent, target: number | null) => {
     e.preventDefault(); (e.currentTarget as HTMLElement).classList.remove('drop')
@@ -70,20 +112,27 @@ export default function Sidebar() {
     (children.get(parent) || []).map((f) => {
       const kids = children.get(f.id) || []
       const isOpen = open[f.id] ?? false
+      const isEditing = editing === f.id
       return (
         <div key={f.id}>
-          <div className={'tree-item' + (sel === f.id ? ' sel' : '')} style={{ paddingLeft: 6 + depth * 14 }}
-            onClick={() => selectFolder(f.id)} draggable={!f.is_system}
+          <div className={'tree-item' + (onDocs && sel === f.id ? ' sel' : '') + (isEditing ? ' editing' : '')} style={{ paddingLeft: 4 + depth * 16 }}
+            onClick={() => !isEditing && selectFolder(f.id)} onDoubleClick={() => !isEditing && kids.length > 0 && setOpen({ ...open, [f.id]: !isOpen })} draggable={!isEditing}
             onDragStart={(e) => e.dataTransfer.setData(DND, JSON.stringify({ type: 'folder', id: f.id }))} {...dropProps(f.id)}>
-            <span className="caret" onClick={(e) => { e.stopPropagation(); setOpen({ ...open, [f.id]: !isOpen }) }}>{kids.length ? (isOpen ? '▾' : '▸') : ''}</span>
-            <span>{f.is_system ? '📥' : '📁'}</span>
-            <span className="name" title={f.name}>{f.is_system ? (t('app') === 'Сорока' ? 'Входящие' : 'Inbox') : f.name}</span>
-            <span className="acts" onClick={(e) => e.stopPropagation()}>
-              <button className="icon" title={t('new_subfolder')} onClick={() => createFolder(f.id)}>＋</button>
-              {!f.is_system && <button className="icon" title={t('rename')} onClick={() => rename(f)}>✎</button>}
-              {!f.is_system && <button className="icon" title={t('delete')} onClick={() => del(f)}>🗑</button>}
+            <span className="caret" onClick={(e) => { e.stopPropagation(); setOpen({ ...open, [f.id]: !isOpen }) }}>
+              {kids.length > 0 && (isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
             </span>
-            <span className="cnt">{f.count || ''}</span>
+            <span className="ti-icon">{isOpen && kids.length ? <FolderOpen size={16} /> : <FolderIcon size={16} />}</span>
+            {isEditing
+              ? <InlineEdit value={f.name} onCommit={(n) => rename(f, n)} onCancel={() => setEditing(null)} />
+              : <span className="name" title={f.name}>{f.name}</span>}
+            {!isEditing && <span className="cnt">{f.count || ''}</span>}
+            {!isEditing && (
+              <span className="acts" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+                <button className="icon" title={t('new_subfolder')} onClick={() => createFolder(f.id)}><FolderPlus size={15} /></button>
+                <button className="icon" title={t('rename')} onClick={() => setEditing(f.id)}><Pencil size={14} /></button>
+                <button className="icon danger" title={t('delete')} onClick={() => del(f)}><Trash2 size={14} /></button>
+              </span>
+            )}
           </div>
           {isOpen && renderTree(f.id, depth + 1)}
         </div>
@@ -100,34 +149,36 @@ export default function Sidebar() {
     i.size ? p.set('tags', [...i].join(',')) : p.delete('tags')
     x.size ? p.set('tags_not', [...x].join(',')) : p.delete('tags_not')
   })
-  const createTag = async () => {
-    const name = prompt(t('new_tag') + ' (finance/tax)')
-    if (!name) return
-    const palette = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b']
-    try { await api('/api/tags', { body: { name, color: palette[Math.floor(Math.random() * palette.length)] } }); reload() } catch (e: any) { toast(e.detail) }
+  const createTag = async (name: string) => {
+    setNewTag(false)
+    try { await api('/api/tags', { body: { name, color: randomTagColor() } }); reload() } catch (e: any) { toast(e.detail) }
   }
   const sortedTags = [...tags].sort((a, b) => a.name.localeCompare(b.name))
 
   return (
     <aside className="sidebar">
-      <div className="side-h"><span>{t('folders')}</span><button className="icon" title={t('new_folder')} onClick={() => createFolder(null)}>＋</button></div>
-      <div className={'tree-item' + (sel == null ? ' sel' : '')} onClick={() => selectFolder(null)} {...dropProps(null)}>
-        <span className="caret" /><span>🗂</span><span className="name">{t('all_documents')}</span>
+      <div className="side-h"><span>{t('folders')}</span></div>
+      <div className={'tree-item' + (onDocs && sel == null ? ' sel' : '')} style={{ paddingLeft: 4 }} onClick={() => selectFolder(null)} {...dropProps(null)}>
+        <span className="caret" /><span className="ti-icon"><Library size={16} /></span><span className="name">{t('all_documents')}</span>
       </div>
+      <div className="side-sep" />
       {renderTree(null, 0)}
-      {sel != null && (
-        <label className="inline small" style={{ margin: '4px 8px' }}>
-          <input type="checkbox" checked={params.get('sub') !== '0'} onChange={(e) => go((p) => e.target.checked ? p.delete('sub') : p.set('sub', '0'))} />
-          {t('include_subfolders')}
-        </label>
-      )}
+      <div className="tree-item new-folder" style={{ paddingLeft: 4 }} onClick={() => createFolder(null)}>
+        <span className="caret" /><span className="ti-icon"><FolderPlus size={16} /></span><span className="name">{t('new_folder')}</span>
+      </div>
       <div className="side-h">
         <span>{t('tags')}</span>
-        <span>
-          <button className="icon" title={t('manage_tags')} onClick={() => setManage(true)}>⚙</button>
-          <button className="icon" title={t('new_tag')} onClick={createTag}>＋</button>
+        <span className="row" style={{ gap: 0 }}>
+          <button className="icon" title={t('manage_tags')} onClick={() => setManage(true)}><Settings2 size={15} /></button>
+          <button className="icon" title={t('new_tag')} onClick={() => setNewTag(true)}><Plus size={15} /></button>
         </span>
       </div>
+      {newTag && (
+        <div className="tree-item editing" style={{ paddingLeft: 8 }}>
+          <span className="dot" style={{ background: 'var(--muted)' }} />
+          <InlineEdit value="" maxLength={tagMaxLen} onCommit={createTag} onCancel={() => setNewTag(false)} />
+        </div>
+      )}
       {inc.size > 1 && (
         <div className="seg small" style={{ margin: '0 6px 6px' }}>
           <button className={tagMode === 'and' ? 'active' : ''} onClick={() => go((p) => p.delete('tag_mode'))}>{t('tag_mode_and')}</button>
@@ -136,10 +187,12 @@ export default function Sidebar() {
       )}
       {sortedTags.map((tg) => (
         <div key={tg.id} className={'tag-item' + (inc.has(tg.id) ? ' inc' : exc.has(tg.id) ? ' exc' : '')} title={t('tag_hint')}
-          onClick={() => cycleTag(tg.id)} style={{ paddingLeft: 6 + (tg.name.split('/').length - 1) * 12 }}>
+          onClick={() => cycleTag(tg.id)} style={{ paddingLeft: 8 + (tg.name.split('/').length - 1) * 14 }}>
           <span className="dot" style={{ background: tg.color }} />
-          <span className="name" style={{ flex: 1 }}>{inc.has(tg.id) ? '＋ ' : exc.has(tg.id) ? '－ ' : ''}{tg.name.split('/').pop()}</span>
-          <span className="cnt muted small">{tg.count || ''}</span>
+          <span className="name">{tg.name.split('/').pop()}</span>
+          {inc.has(tg.id) && <Plus size={13} className="tag-state" />}
+          {exc.has(tg.id) && <Minus size={13} className="tag-state" />}
+          <span className="cnt">{tg.count || ''}</span>
         </div>
       ))}
       {manage && <TagManager onClose={() => { setManage(false); reload() }} />}
@@ -149,30 +202,34 @@ export default function Sidebar() {
 
 function TagManager({ onClose }: { onClose: () => void }) {
   const { t } = useT()
-  const { tags, reload, toast } = useStore()
+  const { tags, reload, toast, tagMaxLen } = useStore()
+  const dlg = useDialog()
   const upd = async (tg: Tag, body: any) => { try { await api(`/api/tags/${tg.id}`, { method: 'PATCH', body }); reload() } catch (e: any) { toast(e.detail) } }
-  const merge = async (tg: Tag, target: number) => { await api('/api/tags/merge', { body: { source_ids: [tg.id], target_id: target } }); reload() }
-  const del = async (tg: Tag) => { if (confirm(`${t('delete')} "${tg.name}"?`)) { await api(`/api/tags/${tg.id}`, { method: 'DELETE' }); reload() } }
+  const merge = async (tg: Tag, target: number) => { try { await api('/api/tags/merge', { body: { source_ids: [tg.id], target_id: target } }); reload() } catch (e: any) { toast(e.detail) } }
+  const del = async (tg: Tag) => {
+    if (await dlg.confirm({ title: t('delete_tag_title').replace('{name}', tg.name), ok: t('delete'), danger: true })) {
+      try { await api(`/api/tags/${tg.id}`, { method: 'DELETE' }); reload() } catch (e: any) { toast(e.detail) }
+    }
+  }
   return (
     <Modal onClose={onClose}>
       <h2>{t('manage_tags')}</h2>
       <table className="list"><tbody>
         {[...tags].sort((a, b) => a.name.localeCompare(b.name)).map((tg) => (
           <tr key={tg.id}>
-            <td><input type="color" value={tg.color} onChange={(e) => upd(tg, { color: e.target.value })} style={{ width: 34, padding: 0 }} /></td>
-            <td><input defaultValue={tg.name} onBlur={(e) => e.target.value !== tg.name && upd(tg, { name: e.target.value })} /></td>
+            <td><input type="color" value={tg.color} onChange={(e) => upd(tg, { color: e.target.value })} className="color-input" /></td>
+            <td><input defaultValue={tg.name} maxLength={Math.max(tagMaxLen, tg.name.length)} onBlur={(e) => e.target.value !== tg.name && upd(tg, { name: e.target.value })} /></td>
             <td className="muted small">{tg.count}</td>
             <td>
-              <select value="" onChange={(e) => e.target.value && merge(tg, Number(e.target.value))}>
-                <option value="">{t('merge_into')}</option>
-                {tags.filter((x) => x.id !== tg.id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-              </select>
+              <Menu icon={<Merge size={14} />} label={t('merge_into')} align="right"
+                items={tags.filter((x) => x.id !== tg.id).map((x) => ({ key: String(x.id), label: x.name, icon: <span className="dot" style={{ background: x.color }} /> }))}
+                onSelect={(k) => merge(tg, Number(k))} />
             </td>
-            <td><button className="icon" onClick={() => del(tg)}>🗑</button></td>
+            <td><button className="icon danger" title={t('delete')} onClick={() => del(tg)}><Trash2 size={15} /></button></td>
           </tr>
         ))}
       </tbody></table>
-      <div className="row" style={{ marginTop: 12 }}><span className="spacer" /><button onClick={onClose}>{t('close')}</button></div>
+      <div className="row dlg-actions"><span className="spacer" /><button onClick={onClose}>{t('close')}</button></div>
     </Modal>
   )
 }
