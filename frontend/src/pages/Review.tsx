@@ -37,33 +37,17 @@ export default function ReviewPage() {
     setItems((xs) => xs.filter((x) => x.page_id !== cur.page_id)); reload()
   }
 
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName.match(/INPUT|TEXTAREA|SELECT/)) return
-      if (e.key === 'j' || e.key === 'ArrowDown') setIdx((i) => Math.min(items.length - 1, i + 1))
-      else if (e.key === 'k' || e.key === 'ArrowUp') setIdx((i) => Math.max(0, i - 1))
-      else if (e.key === 'a') act('accept')
-      else if (e.key === 'n') act('non_document')
-      else if (e.key === 'e' || e.key === 'Enter') act('open')
-      else return
-      e.preventDefault()
-    }
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [items, act])
-
   const cands = detail?.stages_detail?.crop?.info?.candidates || []
   return (
-    <div className="page-pad">
-      <div className="row" style={{ marginBottom: 12 }}>
+    <div>
+      <div className="toolbar">
         <h2 style={{ margin: 0 }}>{t('review_queue')}</h2>
-        <span className="muted">{items.length}</span>
+        <span className="muted">{items.length} {t('pages').toLowerCase()}</span>
         <span className="spacer" />
         <label className="inline"><input type="checkbox" checked={medium} onChange={(e) => setMedium(e.target.checked)} />{t('include_medium')}</label>
       </div>
-      <div className="muted small" style={{ marginBottom: 12 }}>{t('review_help')}</div>
-      {items.length === 0 && <div className="card muted">{t('queue_empty')}</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) 2fr', gap: 16 }}>
+      {items.length === 0 && <div className="page-pad muted">{t('queue_empty')}</div>}
+      <div className="review-grid">
         <div className="review-list">
           {items.map((it, i) => (
             <div key={it.page_id} className={'item' + (i === idx ? ' sel' : '')} onClick={() => setIdx(i)}>
@@ -79,9 +63,9 @@ export default function ReviewPage() {
         {cur && detail && (
           <div className="card col">
             <div className="row">
-              <button className="primary" onClick={() => act('accept')}><Check size={15} /> {t('accept')} <kbd>a</kbd></button>
-              <button onClick={() => act('open')}><PenSquare size={15} /> {t('open_editor')} <kbd>e</kbd></button>
-              <button className="danger" onClick={() => act('non_document')}><FileX size={15} /> {t('not_document')} <kbd>n</kbd></button>
+              <button className="primary" onClick={() => act('accept')}><Check size={15} /> {t('accept')}</button>
+              <button onClick={() => act('open')}><PenSquare size={15} /> {t('open_editor')}</button>
+              <button className="danger" onClick={() => act('non_document')}><FileX size={15} /> {t('not_document')}</button>
             </div>
             {cands.length > 1 && detail.original_url ? (
               <>
