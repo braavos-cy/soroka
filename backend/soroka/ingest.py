@@ -1,9 +1,11 @@
 """Common ingestion (requirements §3.1): every incoming item becomes an ingest_event + documents."""
 import io
 import os
+import re
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
+from urllib.parse import unquote
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session as DB
@@ -15,6 +17,28 @@ from .storage import storage
 
 BOT_PLATFORMS = {"whatsapp", "telegram"}
 MAX_ZIP_FILES = 20000
+_PCT = re.compile(r"%[0-9A-Fa-f]{2}")
+
+
+def decode_name(name: str) -> str:
+    """Undo URL-encoding some senders apply to file names ("%D0%96%20N%C2%BA" -> "Ж Nº")."""
+    name = (name or "").strip()
+    if _PCT.search(name):
+        try:
+            dec = unquote(name, errors="strict")
+            if dec and "\ufffd" not in dec:
+                return dec
+        except UnicodeDecodeError:
+            pass
+    return name
+
+
+def with_extension(title: str, filename: str) -> str:
+    """Make sure a default title shows the file's extension ("Contract" + "x.pdf" -> "Contract.pdf")."""
+    ext = os.path.splitext(filename)[1]
+    if ext and not title.lower().endswith(ext.lower()):
+        title = title.rstrip(". ") + ext
+    return title
 
 
 @dataclass
@@ -144,7 +168,7 @@ def ingest(db: DB, meta: IngestMeta, files: list[InFile], uploaded_by: int | Non
             key, sha = storage().put_original(f.data)
             dup = _find_duplicate(db, sha)
             fo = m.FileOriginal(ingest_event_id=ev.id, blob_key=key, sha256=sha, mime=mime,
-                                filename=os.path.basename(f.filename)[:500], size=len(f.data))
+                                filename=decode_name(os.path.basename(f.filename))[:500], size=len(f.data))
             db.add(fo)
             db.flush()
             if (dup is not None or sha in seen_sha) and not meta.combine:
@@ -154,9 +178,10 @@ def ingest(db: DB, meta: IngestMeta, files: list[InFile], uploaded_by: int | Non
             stored.append(fo)
         batches = [stored] if (meta.combine and stored) else [[s] for s in stored]
         for batch in batches:
-            title = meta.title or os.path.splitext(batch[0].filename)[0]
+            title = decode_name(meta.title) or batch[0].filename
             if meta.platform in BOT_PLATFORMS and not meta.title and batch[0].filename.startswith(("IMG", "image")):
                 title = (meta.caption or "").strip()[:120] or title
+            title = with_extension(title, batch[0].filename)
             doc = m.Document(title=title[:500], folder_id=fid, ingest_event_id=ev.id, source_platform=meta.platform,
                              received_at=ev.ingested_at, document_date=meta.sent_at,
                              source_file_ids=[b.id for b in batch], queue=meta.priority)
