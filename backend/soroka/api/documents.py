@@ -59,7 +59,7 @@ def first_pages(db: DB, docs: list[m.Document]) -> dict[int, int]:
 
 @router.get("/documents")
 def list_documents(
-        q: str = "", folder_id: int | None = None, subfolders: bool = True,
+        q: str = "", folder_id: int | None = None, subfolders: bool = False,
         tags_all: str = "", tags_any: str = "", tags_not: str = "",
         source: str = "", file_type: str = "", language: str = "", status: str = "",
         review: str = "", sender: str = "", chat: str = "",

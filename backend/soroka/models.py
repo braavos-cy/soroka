@@ -34,6 +34,7 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     ui_lang: Mapped[str] = mapped_column(String(8), default="ru")
     rejected_seen_at: Mapped[datetime | None] = ts()  # last visit to the rejected area (new-rejects badge)
+    include_subfolders: Mapped[bool] = mapped_column(Boolean, default=False)  # folder view also lists subfolders
     created_at: Mapped[datetime] = ts(default=now)
     last_login_at: Mapped[datetime | None] = ts()
 

@@ -30,13 +30,13 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     const p = new URLSearchParams({ view, limit: String(limit) })
     const g = (k: string) => params.get(k) || ''
     if (g('q')) p.set('q', g('q'))
-    if (g('folder')) p.set('folder_id', g('folder'))
+    if (g('folder')) { p.set('folder_id', g('folder')); if (user.include_subfolders) p.set('subfolders', 'true') }
     if (g('tags')) p.set(g('tag_mode') === 'or' ? 'tags_any' : 'tags_all', g('tags'))
     if (g('tags_not')) p.set('tags_not', g('tags_not'))
     for (const k of ['source', 'file_type', 'review', 'status', 'sender', 'chat', 'received_from', 'received_to', 'date_from', 'date_to', 'sort', 'language'])
       if (g(k)) p.set(k, g(k))
     return p.toString()
-  }, [params, view, limit])
+  }, [params, view, limit, user.include_subfolders])
 
   const load = useCallback(() => {
     setLoading(true)

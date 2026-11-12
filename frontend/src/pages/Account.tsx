@@ -9,7 +9,7 @@ import { fmtDate } from '../components/Pickers'
 
 export default function AccountPage() {
   const { t, lang, setLang } = useT()
-  const { user, toast } = useStore()
+  const { user, toast, updateUser } = useStore()
   const dlg = useDialog()
   const [sessions, setSessions] = useState<any[]>([])
   const [tokens, setTokens] = useState<any[]>([])
@@ -45,8 +45,14 @@ export default function AccountPage() {
       </div>
       <div className="account-grid">
           <div className="card col acc-lang" ref={row1}>
-            <h3>{t('language')}</h3>
+            <h3>{t('preferences')}</h3>
+            <label>{t('language')}</label>
             <div className="seg" style={{ alignSelf: 'flex-start' }}><button className={lang === 'ru' ? 'active' : ''} onClick={() => setLang('ru')}>Русский</button><button className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')}>English</button></div>
+            <label className="inline toggle-row">
+              <input type="checkbox" className="switch" checked={!!user.include_subfolders}
+                onChange={async (e) => { const v = e.target.checked; updateUser({ include_subfolders: v }); try { await api('/api/auth/prefs', { body: { include_subfolders: v } }) } catch (err: any) { updateUser({ include_subfolders: !v }); toast(err.detail) } }} />
+              <span>{t('pref_include_subfolders')}<span className="small muted block">{t('pref_include_subfolders_hint')}</span></span>
+            </label>
           </div>
           <div className="card col acc-pw">
             <ChangePassword email={user.email} onDone={() => toast(t('saved'))} />
