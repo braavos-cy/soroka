@@ -48,7 +48,7 @@ h1, h2, h3 { margin: 0 0 12px; } h2 { font-size: 18px; } h3 { font-size: 15px; }
 .badge { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
 /* nav badges sit on the corner and take no layout space, so tabs never shift */
 .topbar nav a { position: relative; }
-.topbar nav a .badge { position: absolute; top: 0; right: 0; transform: translate(35%, -30%); min-width: 16px; padding: 0 4px; font-size: 10px; font-weight: 600; line-height: 16px; border-radius: 8px; box-shadow: 0 0 0 2px var(--panel); pointer-events: none; }
+.topbar nav a .badge { z-index: 10; position: absolute; top: 0; right: 0; transform: translate(35%, -30%); min-width: 16px; padding: 0 4px; font-size: 10px; font-weight: 600; line-height: 16px; border-radius: 8px; box-shadow: 0 0 0 2px var(--panel); pointer-events: none; }
 .main { display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
 .side-wrap { position: relative; min-width: 0; min-height: 0; display: flex; }
 .sidebar { flex: 1; min-width: 0; border-right: 1px solid var(--border); background: var(--panel); overflow: auto; padding: 10px 8px; }
@@ -93,7 +93,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .doc-card .thumb { height: 200px; background: var(--panel2); display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .doc-card .thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .doc-card .body { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
-.doc-card .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-card .t { font-weight: 600; }
 .doc-card .chk { position: absolute; top: 8px; left: 8px; width: 18px; height: 18px; }
 .doc-card .tierdot { position: absolute; top: 8px; right: 8px; }
 .snippet { font-size: 12px; color: var(--muted); line-height: 1.35; max-height: 4.1em; overflow: hidden; }
@@ -105,7 +105,8 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .tier { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 11px; line-height: 18px; color: #fff; white-space: nowrap; }
 .tier.high { background: var(--ok); } .tier.medium { background: var(--warn); } .tier.low { background: var(--bad); }
 .tier.none { background: var(--muted); } .tier.proc { background: var(--accent); }
-.bulkbar { display: flex; gap: 8px; align-items: center; padding: 8px 20px; background: var(--accent-weak); border-bottom: 1px solid var(--border); position: sticky; top: 52px; z-index: 4; }
+.toolbar { min-height: 53px; }
+.toolbar.selecting { background: var(--accent-weak); }
 
 /* viewer */
 .viewer { display: grid; grid-template-columns: 150px 1fr 360px; height: 100%; min-height: 0; }
@@ -227,6 +228,24 @@ button.danger-fill { background: var(--bad); border-color: var(--bad); color: #f
 .cell-icon { display: inline-block; vertical-align: middle; }
 .actions-cell { width: 1%; white-space: nowrap; }
 .row-actions { display: flex; gap: 2px; justify-content: flex-end; }
+.review-grid { display: grid; grid-template-columns: minmax(280px, 1fr) 2fr; gap: 16px; padding: 16px 20px; align-items: start; }
+.review-grid > .card { position: sticky; top: 64px; }
+@media (max-width: 900px) { .review-grid { grid-template-columns: 1fr; } .review-grid > .card { position: static; } }
+.file-name { display: block; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; }
+.file-name.strong { font-weight: 600; }
+.list td.title-cell { max-width: 0; width: 40%; }
+.chips-line { display: flex; gap: 4px; min-width: 0; max-width: 100%; overflow: hidden; }
+.chips-line .chip { flex: none; }
+.chips-line.scrolling { overflow-x: auto; padding-bottom: 3px; }
+/* cards: body fills the card so the tag line sits at the bottom */
+.doc-card .body { flex: 1; }
+.doc-card .card-tags { margin-top: auto; padding-top: 4px; min-width: 0; }
+.card-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.card-title .t { flex: 1; }
+.pages-count { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); }
+.results { position: relative; min-height: calc(100vh - 160px); padding-bottom: 24px; }
+.band { position: absolute; z-index: 3; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 2px; pointer-events: none; }
+.list tr.sel td { background: var(--accent-weak); }
 .block { display: block; }
 .toggle-row { align-items: flex-start !important; gap: 10px !important; margin-top: 12px !important; cursor: pointer; }
 /* switch-style checkbox */
@@ -235,6 +254,3 @@ input.switch::after { content: ''; position: absolute; top: 2px; left: 2px; widt
 input.switch:checked { background: var(--accent); }
 input.switch:checked::after { transform: translateX(14px); }
 input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
-.review-grid { display: grid; grid-template-columns: minmax(280px, 1fr) 2fr; gap: 16px; padding: 16px 20px; align-items: start; }
-.review-grid > .card { position: sticky; top: 64px; }
-@media (max-width: 900px) { .review-grid { grid-template-columns: 1fr; } .review-grid > .card { position: static; } }

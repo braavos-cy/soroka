@@ -34,7 +34,7 @@ function InlineEdit({ value, onCommit, onCancel, maxLength = 300 }: { value: str
 
 export default function Sidebar() {
   const { t } = useT()
-  const { folders, tags, reload, toast, tagMaxLen } = useStore()
+  const { folders, tags, reload, toast, tagMaxLen, docTotal } = useStore()
   const dlg = useDialog()
   const [params] = useSearchParams()
   const nav = useNavigate()
@@ -159,7 +159,7 @@ export default function Sidebar() {
     <aside className="sidebar">
       <div className="side-h"><span>{t('folders')}</span></div>
       <div className={'tree-item' + (onDocs && sel == null ? ' sel' : '')} style={{ paddingLeft: 4 }} onClick={() => selectFolder(null)} {...dropProps(null)}>
-        <span className="caret" /><span className="ti-icon"><Library size={16} /></span><span className="name">{t('all_documents')}</span>
+        <span className="caret" /><span className="ti-icon"><Library size={16} /></span><span className="name">{t('all_documents')}</span><span className="cnt">{docTotal || ''}</span>
       </div>
       <div className="side-sep" />
       {renderTree(null, 0)}

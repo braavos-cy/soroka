@@ -10,6 +10,7 @@ type Store = {
   reviewCount: number
   rejectedNew: number
   tagMaxLen: number
+  docTotal: number
   reload: () => void
   updateUser: (patch: Partial<User>) => void
   toast: (msg: string) => void
@@ -28,6 +29,7 @@ export function StoreProvider({ user: initialUser, children }: { user: User; chi
   const { t } = useT()
   const [rejectedNew, setRejectedNew] = useState(0)
   const [tagMaxLen, setTagMaxLen] = useState(40)
+  const [docTotal, setDocTotal] = useState(0)
   const loc = useLocation()
   const path = useRef(loc.pathname)
   path.current = loc.pathname
@@ -45,6 +47,7 @@ export function StoreProvider({ user: initialUser, children }: { user: User; chi
       if (path.current === '/rejected' && s.rejected_new > 0) { await api('/api/rejected/seen', { method: 'POST' }); s.rejected_new = 0 }
       setRejectedNew(s.rejected_new)
       if (s.tag_max_length) setTagMaxLen(s.tag_max_length)
+      setDocTotal(Object.entries(s.documents || {}).filter(([k]) => k !== 'rejected').reduce((a, [, v]) => a + Number(v), 0))
       if (version.current !== null && version.current !== s.version) { loadLists(); window.dispatchEvent(new Event('soroka:reload')) }
       version.current = s.version
     } catch { /* offline / logged out */ }
@@ -60,7 +63,7 @@ export function StoreProvider({ user: initialUser, children }: { user: User; chi
   useEffect(() => { if (loc.pathname === '/rejected') poll() }, [loc.pathname])
   const toast = useCallback((m: string) => { setMsg(m); setTimeout(() => setMsg(null), 3500) }, [])
   return (
-    <StoreCtx.Provider value={{ user, folders, tags, reviewCount, rejectedNew, tagMaxLen, reload, updateUser, toast }}>
+    <StoreCtx.Provider value={{ user, folders, tags, reviewCount, rejectedNew, tagMaxLen, docTotal, reload, updateUser, toast }}>
       {children}
       {msg && <div className="toast">{errText(t, msg)}</div>}
     </StoreCtx.Provider>
