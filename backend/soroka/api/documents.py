@@ -182,6 +182,7 @@ class DocPatch(BaseModel):
     folder_id: int | None = None
     document_date: str | None = None
     clear_date: bool = False
+    clear_folder: bool = False
     tag_ids: list[int] | None = None
 
 
@@ -195,6 +196,8 @@ def update_document(doc_id: int, body: DocPatch, request: Request, p: Principal 
         if db.get(m.Folder, body.folder_id) is None:
             raise HTTPException(404, "folder_not_found")
         d.folder_id = body.folder_id
+    elif body.clear_folder:
+        d.folder_id = None
     if body.clear_date:
         d.document_date = None
     elif body.document_date:

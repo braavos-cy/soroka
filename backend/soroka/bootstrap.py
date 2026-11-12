@@ -1,4 +1,4 @@
-"""Idempotent first-start setup: Inbox folder and the first admin account."""
+"""Idempotent first-start setup: the first admin account."""
 import logging
 import sys
 
@@ -13,8 +13,6 @@ log = logging.getLogger("soroka.bootstrap")
 def main() -> None:
     db = SessionLocal()
     try:
-        if not db.query(m.Folder).filter_by(is_system=True).first():
-            db.add(m.Folder(name="Inbox", is_system=True))
         if not db.query(m.User).filter_by(role="admin").first():
             pw = settings().bootstrap_admin_password
             if not pw:

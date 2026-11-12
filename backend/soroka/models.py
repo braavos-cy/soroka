@@ -185,7 +185,7 @@ class Folder(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("folder.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(300))
-    is_system: Mapped[bool] = mapped_column(Boolean, default=False)  # Inbox
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)  # legacy (Inbox), unused
     created_at: Mapped[datetime] = ts(default=now)
     __table_args__ = (UniqueConstraint("parent_id", "name"),)
 
@@ -209,7 +209,7 @@ class Document(Base):
     __tablename__ = "document"
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(500), default="")
-    folder_id: Mapped[int] = mapped_column(ForeignKey("folder.id"), index=True)
+    folder_id: Mapped[int | None] = mapped_column(ForeignKey("folder.id", ondelete="SET NULL"), index=True)  # NULL = no folder
     ingest_event_id: Mapped[int | None] = mapped_column(ForeignKey("ingest_event.id", ondelete="SET NULL"))
     document_date: Mapped[datetime | None] = ts()
     received_at: Mapped[datetime] = ts(default=now, index=True)
