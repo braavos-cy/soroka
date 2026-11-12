@@ -11,7 +11,7 @@ const en = {
   recovery_code: 'Recovery code', use_recovery: 'Use a recovery code', verify: 'Verify', setup_2fa: 'Set up two-factor authentication',
   setup_2fa_text: 'Two-factor authentication is required. Scan this QR code with an authenticator app (e.g. Aegis, FreeOTP, Google Authenticator), then enter the 6-digit code.',
   secret_key: 'Secret key', recovery_codes: 'Recovery codes', recovery_codes_text: 'Store these one-time codes somewhere safe. Each can be used once if you lose your phone.',
-  continue: 'Continue', change_password: 'Change password', current_password: 'Current password', new_password: 'New password (min. 10 characters)',
+  continue: 'Continue', change_password: 'Change password', current_password: 'Current password', new_password: 'New password',
   must_change_password: 'Please set a new password before continuing.', reauth_title: 'Confirm it is you', reauth_text: 'This action needs your password (and 2FA code).',
   confirm: 'Confirm', loading: 'Loading…', nothing_found: 'Nothing found', results: 'results', selected: 'selected',
   move_to: 'Move to…', add_tag: 'Add tag…', remove_tag: 'Remove tag…', to_trash: 'Move to trash', restore: 'Restore',
@@ -36,7 +36,7 @@ const en = {
   view_result: 'Result', view_original: 'Original', sender: 'Sender', chat: 'Chat', caption: 'Caption', context: 'Context',
   reply_to: 'Reply to', forwarded: 'Forwarded', sent_at: 'Sent', ingested_at: 'Received', forced: 'Force-saved',
   review_queue: 'Review queue', review_help: 'j/k: next/prev · a: accept · e or Enter: open editor · n: not a document',
-  accept: 'Accept', open_editor: 'Open editor', include_medium: 'Include "please check"', queue_empty: 'Nothing to review 🎉',
+  accept: 'Accept', open_editor: 'Open editor', include_medium: 'Include "please check"', queue_empty: 'Nothing to review',
   rejected_help: 'Items the classifier decided are not documents. They are deleted automatically after the retention period.',
   expires: 'expires', trash_help: 'Deleted documents. Restorable by anyone; purged automatically after the retention period.',
   users: 'Users', settings: 'Settings', connectors: 'Connectors', audit_log: 'Audit log', system: 'System',
@@ -50,7 +50,7 @@ const en = {
   sessions: 'Sessions', revoke: 'Revoke', current: 'current', api_tokens: 'API tokens', create_token: 'Create token',
   token_once: 'Copy this token now — it will not be shown again:', two_factor: 'Two-factor authentication', enabled: 'enabled',
   regenerate_codes: 'Regenerate recovery codes', reconfigure_2fa: 'Set up a new authenticator', language: 'Language',
-  confirm_delete_folder: 'The folder is not empty. Move its documents to Trash and delete it?', confirm_purge: 'Delete permanently? This cannot be undone.',
+  confirm_delete_folder: 'The folder is not empty. Its documents will be moved to Trash.', confirm_purge: 'Delete permanently? This cannot be undone.',
   saved: 'Saved', no_text: 'No text', warnings: 'Warnings', all: 'All', none: 'None', back: 'Back',
   require_2fa: 'Require 2FA for everyone', trash_days: 'Trash retention (days)', rejected_days: 'Rejected retention (days)',
   rejected_min_days: 'Rejected minimum retention (days)', rejected_max_mb: 'Rejected area max size (MB)', min_free_disk_mb: 'Min. free disk (MB)',
@@ -58,6 +58,31 @@ const en = {
   accept_reject_threshold: 'Reject threshold', doc_count: 'documents', source_upload: 'upload', source_whatsapp: 'WhatsApp',
   source_telegram: 'Telegram', source_email: 'email', source_import: 'import', not_ready: 'Processing…', page_error: 'Processing failed',
   versions: 'Versions', status_detail: 'Details',
+  confirm_password: 'Repeat new password', passwords_match: 'Passwords match', passwords_dont_match: 'Passwords do not match',
+  generate_password: 'Generate', show: 'Show password', hide: 'Hide password',
+  password_requirements: 'The password must contain:',
+  pw_rule_password_too_short: 'at least 12 characters', pw_rule_password_no_lower: 'a lowercase letter',
+  pw_rule_password_no_upper: 'an uppercase letter', pw_rule_password_no_digit: 'a digit',
+  pw_rule_password_no_symbol: 'a symbol (e.g. ! # % _ -)', pw_rule_password_repetitive: 'at least 6 different characters, no 4 identical in a row',
+  pw_rule_password_common: 'no common words (password, qwerty, …)', pw_rule_password_contains_email: 'not your email name',
+  pw_rule_password_reused: 'differs from the current password',
+  err_password_policy: 'The password does not meet the requirements:', err_password_too_long: 'The password is too long (max. 128 characters)',
+  err_invalid_credentials: 'Invalid email or password', err_account_locked: 'Account temporarily locked — try again later',
+  err_invalid_code: 'Invalid code', err_too_many_attempts: 'Too many attempts — try again in a few minutes',
+  err_reauth_required: 'Please confirm with your password first', err_user_exists: 'A user with this email already exists',
+  err_bad_email: 'Invalid email address', err_cannot_delete_self: 'You cannot delete yourself',
+  err_cannot_demote_self: 'You cannot demote or disable yourself', err_2fa_required_by_policy: '2FA is required by policy',
+  err_admin_only: 'Administrators only', err_folder_exists: 'A folder with this name already exists',
+  err_tag_exists: 'A tag with this name already exists', err_name_required: 'Name is required',
+  err_system_folder: 'System folders cannot be changed', err_cycle: 'A folder cannot be moved into itself',
+  err_not_ready: 'Not processed yet', err_csrf: 'Request rejected (CSRF) — reload the page',
+  filter_placeholder: 'Filter…', no_folder: 'No folder', no_folders: 'No folders yet', no_tags: 'No tags yet', tag: 'Tag',
+  new_folder_name: 'New folder', delete_folder_title: 'Delete folder «{name}»?', delete_tag_title: 'Delete tag «{name}»?',
+  ft_image: 'Image', ft_pdf: 'PDF', ft_office: 'Office', ft_mixed: 'Mixed', sort: 'Sort',
+  sort_received_desc: 'Newest received', sort_received_asc: 'Oldest received', sort_date_desc: 'Document date', sort_title: 'Title',
+  layout_grid: 'Grid', layout_list: 'List', load_more: 'Load more', full_page: 'Whole image', auto: 'Auto',
+  relink_confirm: 'The bot will be logged out of WhatsApp and a new QR code will be shown.', waiting: 'Waiting…', edit: 'Edit',
+  create_tag: 'Create tag «{name}»', find_or_create_tag: 'Find or create a tag…', type_to_create_tag: 'Type a name to create a tag', reset_2fa_confirm: 'The user will be logged out and must set up two-factor authentication again at the next login.', tag_max_length: 'Max. tag length (characters)', err_tag_too_long: 'The tag name is too long', hide_sidebar: 'Hide sidebar', show_sidebar: 'Show sidebar', resize_sidebar: 'Drag to resize, double-click to reset', role_user: 'User', role_admin: 'Administrator', token_name_hint: 'e.g. Chrome laptop',
 }
 type Key = keyof typeof en
 
@@ -72,7 +97,7 @@ const ru: Partial<Record<Key, string>> = {
   recovery_code: 'Код восстановления', use_recovery: 'Использовать код восстановления', verify: 'Проверить', setup_2fa: 'Настройка двухфакторной аутентификации',
   setup_2fa_text: 'Двухфакторная аутентификация обязательна. Отсканируйте QR-код приложением-аутентификатором (например, Aegis, FreeOTP, Google Authenticator) и введите 6-значный код.',
   secret_key: 'Секретный ключ', recovery_codes: 'Коды восстановления', recovery_codes_text: 'Сохраните эти одноразовые коды в надёжном месте. Каждый можно использовать один раз, если вы потеряете телефон.',
-  continue: 'Продолжить', change_password: 'Сменить пароль', current_password: 'Текущий пароль', new_password: 'Новый пароль (мин. 10 символов)',
+  continue: 'Продолжить', change_password: 'Сменить пароль', current_password: 'Текущий пароль', new_password: 'Новый пароль',
   must_change_password: 'Пожалуйста, задайте новый пароль.', reauth_title: 'Подтвердите, что это вы', reauth_text: 'Для этого действия нужен пароль (и код 2FA).',
   confirm: 'Подтвердить', loading: 'Загрузка…', nothing_found: 'Ничего не найдено', results: 'найдено', selected: 'выбрано',
   move_to: 'Переместить в…', add_tag: 'Добавить тег…', remove_tag: 'Убрать тег…', to_trash: 'В корзину', restore: 'Восстановить',
@@ -97,7 +122,7 @@ const ru: Partial<Record<Key, string>> = {
   view_result: 'Результат', view_original: 'Оригинал', sender: 'Отправитель', chat: 'Чат', caption: 'Подпись', context: 'Контекст',
   reply_to: 'Ответ на', forwarded: 'Переслано', sent_at: 'Отправлено', ingested_at: 'Получено', forced: 'Принудительно сохранено',
   review_queue: 'Очередь проверки', review_help: 'j/k: след./пред. · a: принять · e или Enter: открыть редактор · n: не документ',
-  accept: 'Принять', open_editor: 'Открыть редактор', include_medium: 'Включая «проверить»', queue_empty: 'Нечего проверять 🎉',
+  accept: 'Принять', open_editor: 'Открыть редактор', include_medium: 'Включая «проверить»', queue_empty: 'Нечего проверять',
   rejected_help: 'Файлы, которые классификатор счёл не документами. Удаляются автоматически по истечении срока хранения.',
   expires: 'удаление', trash_help: 'Удалённые документы. Любой может восстановить; автоматически удаляются по истечении срока.',
   users: 'Пользователи', settings: 'Настройки', connectors: 'Коннекторы', audit_log: 'Журнал аудита', system: 'Система',
@@ -111,7 +136,7 @@ const ru: Partial<Record<Key, string>> = {
   sessions: 'Сеансы', revoke: 'Завершить', current: 'текущий', api_tokens: 'API-токены', create_token: 'Создать токен',
   token_once: 'Скопируйте токен сейчас — он больше не будет показан:', two_factor: 'Двухфакторная аутентификация', enabled: 'включена',
   regenerate_codes: 'Новые коды восстановления', reconfigure_2fa: 'Настроить новый аутентификатор', language: 'Язык',
-  confirm_delete_folder: 'Папка не пуста. Переместить её документы в корзину и удалить папку?', confirm_purge: 'Удалить навсегда? Это нельзя отменить.',
+  confirm_delete_folder: 'Папка не пуста. Её документы будут перемещены в корзину.', confirm_purge: 'Удалить навсегда? Это нельзя отменить.',
   saved: 'Сохранено', no_text: 'Нет текста', warnings: 'Предупреждения', all: 'Все', none: 'Нет', back: 'Назад',
   require_2fa: 'Обязательная 2FA для всех', trash_days: 'Хранение в корзине (дней)', rejected_days: 'Хранение отклонённых (дней)',
   rejected_min_days: 'Мин. хранение отклонённых (дней)', rejected_max_mb: 'Макс. объём отклонённых (МБ)', min_free_disk_mb: 'Мин. свободно на диске (МБ)',
@@ -119,6 +144,31 @@ const ru: Partial<Record<Key, string>> = {
   accept_reject_threshold: 'Порог «отклонить»', doc_count: 'документов', source_upload: 'загрузка', source_whatsapp: 'WhatsApp',
   source_telegram: 'Telegram', source_email: 'почта', source_import: 'импорт', not_ready: 'Обработка…', page_error: 'Ошибка обработки',
   versions: 'Версии', status_detail: 'Подробности',
+  confirm_password: 'Повторите новый пароль', passwords_match: 'Пароли совпадают', passwords_dont_match: 'Пароли не совпадают',
+  generate_password: 'Сгенерировать', show: 'Показать пароль', hide: 'Скрыть пароль',
+  password_requirements: 'Пароль должен содержать:',
+  pw_rule_password_too_short: 'не менее 12 символов', pw_rule_password_no_lower: 'строчную букву',
+  pw_rule_password_no_upper: 'заглавную букву', pw_rule_password_no_digit: 'цифру',
+  pw_rule_password_no_symbol: 'спецсимвол (например ! # % _ -)', pw_rule_password_repetitive: 'не менее 6 разных символов, не более 3 одинаковых подряд',
+  pw_rule_password_common: 'без распространённых слов (password, qwerty, пароль…)', pw_rule_password_contains_email: 'без имени из вашего email',
+  pw_rule_password_reused: 'отличаться от текущего пароля',
+  err_password_policy: 'Пароль не соответствует требованиям:', err_password_too_long: 'Пароль слишком длинный (макс. 128 символов)',
+  err_invalid_credentials: 'Неверный email или пароль', err_account_locked: 'Аккаунт временно заблокирован — попробуйте позже',
+  err_invalid_code: 'Неверный код', err_too_many_attempts: 'Слишком много попыток — попробуйте через несколько минут',
+  err_reauth_required: 'Сначала подтвердите действие паролем', err_user_exists: 'Пользователь с таким email уже существует',
+  err_bad_email: 'Неверный email', err_cannot_delete_self: 'Нельзя удалить самого себя',
+  err_cannot_demote_self: 'Нельзя понизить или отключить самого себя', err_2fa_required_by_policy: '2FA обязательна по политике',
+  err_admin_only: 'Только для администраторов', err_folder_exists: 'Папка с таким именем уже существует',
+  err_tag_exists: 'Тег с таким именем уже существует', err_name_required: 'Укажите название',
+  err_system_folder: 'Системные папки нельзя изменять', err_cycle: 'Нельзя переместить папку в саму себя',
+  err_not_ready: 'Ещё не обработано', err_csrf: 'Запрос отклонён (CSRF) — перезагрузите страницу',
+  filter_placeholder: 'Фильтр…', no_folder: 'Без папки', no_folders: 'Папок пока нет', no_tags: 'Тегов пока нет', tag: 'Тег',
+  new_folder_name: 'Новая папка', delete_folder_title: 'Удалить папку «{name}»?', delete_tag_title: 'Удалить тег «{name}»?',
+  ft_image: 'Изображение', ft_pdf: 'PDF', ft_office: 'Office', ft_mixed: 'Смешанный', sort: 'Сортировка',
+  sort_received_desc: 'Сначала новые', sort_received_asc: 'Сначала старые', sort_date_desc: 'По дате документа', sort_title: 'По названию',
+  layout_grid: 'Плитка', layout_list: 'Список', load_more: 'Показать ещё', full_page: 'Всё изображение', auto: 'Авто',
+  relink_confirm: 'Бот выйдет из WhatsApp, и появится новый QR-код.', waiting: 'Ожидание…', edit: 'Изменить',
+  create_tag: 'Создать тег «{name}»', find_or_create_tag: 'Найти или создать тег…', type_to_create_tag: 'Введите название, чтобы создать тег', reset_2fa_confirm: 'Пользователь будет разлогинен и при следующем входе должен заново настроить двухфакторную аутентификацию.', tag_max_length: 'Макс. длина тега (символов)', err_tag_too_long: 'Слишком длинное название тега', hide_sidebar: 'Скрыть панель', show_sidebar: 'Показать панель', resize_sidebar: 'Перетащите для изменения ширины, двойной клик — сброс', role_user: 'Пользователь', role_admin: 'Администратор', token_name_hint: 'например, ноутбук Chrome',
 }
 
 export type Lang = 'ru' | 'en'
@@ -126,6 +176,14 @@ export const dicts = { en, ru }
 export type T = (k: Key | string) => string
 export function makeT(lang: Lang): T {
   return (k) => (dicts[lang] as any)[k] ?? (en as any)[k] ?? k
+}
+/** Human-readable text for an API error code, in the current language (falls back to the raw code). */
+export function errText(t: T, detail: string): string {
+  const own = t('err_' + detail)
+  if (own !== 'err_' + detail) return own
+  const rule = t('pw_rule_' + detail)
+  if (rule !== 'pw_rule_' + detail) return t('err_password_policy') + ' ' + rule
+  return detail
 }
 export const LangCtx = createContext<{ lang: Lang; t: T; setLang: (l: Lang) => void }>({ lang: 'ru', t: makeT('ru'), setLang: () => {} })
 export const useT = () => useContext(LangCtx)

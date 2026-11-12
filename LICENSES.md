@@ -26,6 +26,7 @@ linked libraries, on our own server (no redistribution), which those licenses pe
 | ClamAV (optional) | malware scan | ⚠ GPL-2.0 (separate container, talked to over a socket) |
 | React, React Router, Vite | web UI | MIT |
 | qrcode (npm) | QR codes in UI | MIT |
+| lucide-react (npm) | UI icons, logo, favicon | ISC |
 | Baileys 6.7 | WhatsApp Web protocol | MIT |
 | libsignal-node (Baileys dependency) | Signal protocol | ⚠ **GPL-3.0** — isolated in the WhatsApp container. The alternative (whatsmeow) also depends on a GPL-3.0 libsignal. |
 | pino | connector logging | MIT |
