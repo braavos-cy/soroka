@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, exists, func, not_, or_, select, text
 from sqlalchemy.orm import Session as DB
 
+from .. import appsettings
 from .. import models as m
 from ..db import get_db, now
 from ..deps import Principal, admin_reauth, audit, client_ip, require_reauth, ui_user
@@ -631,4 +632,5 @@ def stats(p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
                                                                   m.Document.trashed_at.is_(None),
                                                                   m.Document.status != "rejected").count(),
             "trash": db.query(m.Document).filter(m.Document.trashed_at.is_not(None)).count(),
+            "tag_max_length": appsettings.get(db, "tag_max_length"),
             "queues": queue_lengths()}
