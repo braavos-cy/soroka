@@ -33,6 +33,7 @@ class User(Base):
     locked_until: Mapped[datetime | None] = ts()
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     ui_lang: Mapped[str] = mapped_column(String(8), default="ru")
+    rejected_seen_at: Mapped[datetime | None] = ts()  # last visit to the rejected area (new-rejects badge)
     created_at: Mapped[datetime] = ts(default=now)
     last_login_at: Mapped[datetime | None] = ts()
 
