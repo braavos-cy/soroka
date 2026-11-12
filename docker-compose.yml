@@ -1,0 +1,78 @@
+# Soroka — single-server deployment. `docker compose up -d --build`
+# GPU worker / ClamAV are optional (see profiles and docker-compose.gpu.yml in later phases).
+x-backend: &backend
+  build: ./backend
+  image: soroka-backend
+  env_file: .env
+  volumes:
+    - files:/data
+  depends_on:
+    db: { condition: service_healthy }
+    redis: { condition: service_started }
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: soroka
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-soroka}
+      POSTGRES_DB: soroka
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U soroka"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    restart: unless-stopped
+
+  api:
+    <<: *backend
+
+  worker:
+    <<: *backend
+    # priority: live ingest > user edits re-render > bulk backlog
+    command: ["rq", "worker", "--url", "redis://redis:6379/0", "high", "default", "low"]
+    deploy:
+      replicas: 2
+
+  scheduler:
+    <<: *backend
+    command: ["python", "-m", "soroka.scheduler"]
+
+  whatsapp:
+    build: ./connectors/whatsapp
+    env_file: .env
+    environment:
+      CORE_URL: http://api:8000
+    volumes: [wa_auth:/app/auth]
+    depends_on: [api]
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    volumes: [caddydata:/data]
+    depends_on: [api]
+    restart: unless-stopped
+
+  clamav:
+    image: clamav/clamav:stable
+    profiles: ["security"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  files:
+  wa_auth:
+  caddydata:

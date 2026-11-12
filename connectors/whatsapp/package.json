@@ -1,0 +1,10 @@
+{
+  "name": "soroka-whatsapp",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node index.js" },
+  "dependencies": {
+    "baileys": "6.7.24",
+    "pino": "^9.5.0"
+  }
+}
