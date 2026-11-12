@@ -1,11 +1,15 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { api, Folder, Tag, User } from './api'
+import { errText, useT } from './i18n'
 
 type Store = {
   user: User
   folders: Folder[]
   tags: Tag[]
   reviewCount: number
+  rejectedNew: number
+  tagMaxLen: number
   reload: () => void
   toast: (msg: string) => void
 }
@@ -17,17 +21,44 @@ export function StoreProvider({ user, children }: { user: User; children: React.
   const [tags, setTags] = useState<Tag[]>([])
   const [reviewCount, setReviewCount] = useState(0)
   const [msg, setMsg] = useState<string | null>(null)
-  const reload = useCallback(() => {
+  const { t } = useT()
+  const [rejectedNew, setRejectedNew] = useState(0)
+  const [tagMaxLen, setTagMaxLen] = useState(40)
+  const loc = useLocation()
+  const path = useRef(loc.pathname)
+  path.current = loc.pathname
+  const version = useRef<string | null>(null)
+  const loadLists = useCallback(() => {
     api<Folder[]>('/api/folders').then(setFolders).catch(() => {})
     api<Tag[]>('/api/tags').then(setTags).catch(() => {})
-    api('/api/stats').then((s) => setReviewCount(s.review)).catch(() => {})
   }, [])
-  useEffect(() => { reload(); const i = setInterval(reload, 30000); return () => clearInterval(i) }, [reload])
+  // stats carry a fingerprint of all listed data: when it changes (new upload, a reject, processing finished,
+  // another user's edit…) every open page is told to reload via the 'soroka:reload' event
+  const poll = useCallback(async () => {
+    try {
+      const s = await api('/api/stats')
+      setReviewCount(s.review)
+      if (path.current === '/rejected' && s.rejected_new > 0) { await api('/api/rejected/seen', { method: 'POST' }); s.rejected_new = 0 }
+      setRejectedNew(s.rejected_new)
+      if (s.tag_max_length) setTagMaxLen(s.tag_max_length)
+      if (version.current !== null && version.current !== s.version) { loadLists(); window.dispatchEvent(new Event('soroka:reload')) }
+      version.current = s.version
+    } catch { /* offline / logged out */ }
+  }, [loadLists])
+  const reload = useCallback(() => { loadLists(); poll() }, [loadLists, poll])
+  useEffect(() => {
+    reload()
+    const i = setInterval(() => { if (!document.hidden) poll() }, 5000)
+    const vis = () => { if (!document.hidden) poll() }
+    document.addEventListener('visibilitychange', vis)
+    return () => { clearInterval(i); document.removeEventListener('visibilitychange', vis) }
+  }, [reload, poll])
+  useEffect(() => { if (loc.pathname === '/rejected') poll() }, [loc.pathname])
   const toast = useCallback((m: string) => { setMsg(m); setTimeout(() => setMsg(null), 3500) }, [])
   return (
-    <StoreCtx.Provider value={{ user, folders, tags, reviewCount, reload, toast }}>
+    <StoreCtx.Provider value={{ user, folders, tags, reviewCount, rejectedNew, tagMaxLen, reload, toast }}>
       {children}
-      {msg && <div className="toast">{msg}</div>}
+      {msg && <div className="toast">{errText(t, msg)}</div>}
     </StoreCtx.Provider>
   )
 }
@@ -41,6 +72,15 @@ export function folderPath(folders: Folder[], id: number | null | undefined): st
   return parts.join(' / ')
 }
 
-export function sortedFolderOptions(folders: Folder[]): { id: number; label: string }[] {
-  return folders.map((f) => ({ id: f.id, label: folderPath(folders, f.id) })).sort((a, b) => a.label.localeCompare(b.label))
+/** Folders in tree order (depth-first, sorted by name) with their depth. */
+export function folderTree(folders: Folder[]): (Folder & { depth: number })[] {
+  const kids = new Map<number | null, Folder[]>()
+  folders.forEach((f) => kids.set(f.parent_id, [...(kids.get(f.parent_id) || []), f]))
+  const out: (Folder & { depth: number })[] = []
+  const walk = (p: number | null, depth: number) => {
+    if (depth > 50) return
+    for (const f of (kids.get(p) || []).sort((a, b) => a.name.localeCompare(b.name))) { out.push({ ...f, depth }); walk(f.id, depth + 1) }
+  }
+  walk(null, 0)
+  return out
 }

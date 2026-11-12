@@ -5,13 +5,16 @@ import { useT } from '../i18n'
 import { folderPath, useStore } from '../store'
 import { DND } from '../components/Sidebar'
 import UploadModal from '../components/Upload'
-import { FolderSelect, fmtDate, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
+import { FolderMenu, fmtDate, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
+import { Select, useDialog } from '../components/ui'
+import { ArchiveRestore, Download, LayoutGrid, List, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
 
 const PAGE = 60
 
 export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 'trash' }) {
   const { t } = useT()
   const { folders, user, reload, toast } = useStore()
+  const dlg = useDialog()
   const [params, setParams] = useSearchParams()
   const nav = useNavigate()
   const [items, setItems] = useState<DocSummary[]>([])
@@ -27,7 +30,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     const p = new URLSearchParams({ view, limit: String(limit) })
     const g = (k: string) => params.get(k) || ''
     if (g('q')) p.set('q', g('q'))
-    if (g('folder')) { p.set('folder_id', g('folder')); if (g('sub') === '0') p.set('subfolders', 'false') }
+    if (g('folder')) p.set('folder_id', g('folder'))
     if (g('tags')) p.set(g('tag_mode') === 'or' ? 'tags_any' : 'tags_all', g('tags'))
     if (g('tags_not')) p.set('tags_not', g('tags_not'))
     for (const k of ['source', 'file_type', 'review', 'status', 'sender', 'chat', 'received_from', 'received_to', 'date_from', 'date_to', 'sort', 'language'])
@@ -57,11 +60,11 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   }
   const rescue = async (id: number) => { await api(`/api/documents/${id}/rescue`, { method: 'POST' }); load(); reload() }
   const purge = async (ids: number[]) => {
-    if (!confirm(t('confirm_purge'))) return
+    if (!(await dlg.confirm({ title: t('purge') + '?', message: t('confirm_purge'), ok: t('purge'), danger: true }))) return
     for (const id of ids) await api(`/api/documents/${id}`, { method: 'DELETE' })
     setSel(new Set()); load(); reload()
   }
-  const emptyTrash = async () => { if (confirm(t('confirm_purge'))) { await api('/api/trash/empty', { method: 'POST' }); load(); reload() } }
+  const emptyTrash = async () => { if (await dlg.confirm({ title: t('empty_trash') + '?', message: t('confirm_purge'), ok: t('empty_trash'), danger: true })) { await api('/api/trash/empty', { method: 'POST' }); load(); reload() } }
   const setLayoutP = (l: 'grid' | 'list') => { setLayout(l); try { localStorage.setItem('layout', l) } catch { /* */ } }
   const open = (d: DocSummary) => nav(`/doc/${d.id}${params.get('q') ? '?q=' + encodeURIComponent(params.get('q')!) : ''}`)
   const dragStart = (e: React.DragEvent, d: DocSummary) => {
@@ -74,37 +77,29 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   return (
     <div>
       <div className="toolbar">
-        <h2 style={{ margin: 0 }}>{heading.replace(/^Inbox/, t('app') === 'Сорока' ? 'Входящие' : 'Inbox')}</h2>
+        <h2 style={{ margin: 0 }}>{heading}</h2>
         <span className="muted">{total} {params.get('q') ? t('results') : t('doc_count')}</span>
         <span className="spacer" />
-        {view === 'active' && <button onClick={() => setShowFilters(!showFilters)} className={showFilters ? 'active' : ''}>⚲ {t('filters')}</button>}
-        <select value={params.get('sort') || ''} onChange={(e) => setParam('sort', e.target.value)}>
-          <option value="">↓ {t('received')}</option><option value="received_asc">↑ {t('received')}</option>
-          <option value="date_desc">↓ {t('doc_date')}</option><option value="title">{t('title')}</option>
-        </select>
-        <div className="seg"><button className={layout === 'grid' ? 'active' : ''} onClick={() => setLayoutP('grid')}>▦</button><button className={layout === 'list' ? 'active' : ''} onClick={() => setLayoutP('list')}>☰</button></div>
-        {view === 'active' && <button className="primary" onClick={() => setUpload(true)}>⤒ {t('upload')}</button>}
-        {view === 'trash' && user.role === 'admin' && <button className="danger" onClick={emptyTrash}>{t('empty_trash')}</button>}
+        {view === 'active' && <button onClick={() => setShowFilters(!showFilters)} className={showFilters ? 'active' : ''}><SlidersHorizontal size={15} /> {t('filters')}</button>}
+        <Select value={params.get('sort') || ''} onChange={(v) => setParam('sort', v)} prefix={t('sort')}
+          options={[{ value: '', label: t('sort_received_desc') }, { value: 'received_asc', label: t('sort_received_asc') },
+            { value: 'date_desc', label: t('sort_date_desc') }, { value: 'title', label: t('sort_title') }]} />
+        <div className="seg"><button className={layout === 'grid' ? 'active' : ''} onClick={() => setLayoutP('grid')} title={t('layout_grid')}><LayoutGrid size={15} /></button><button className={layout === 'list' ? 'active' : ''} onClick={() => setLayoutP('list')} title={t('layout_list')}><List size={15} /></button></div>
+        {view === 'active' && <button className="primary" onClick={() => setUpload(true)}><UploadIcon size={15} /> {t('upload')}</button>}
+        {view === 'trash' && user.role === 'admin' && <button className="danger" onClick={emptyTrash}><Trash2 size={15} /> {t('empty_trash')}</button>}
       </div>
       {view === 'rejected' && <div className="filters muted small">{t('rejected_help')}</div>}
       {view === 'trash' && <div className="filters muted small">{t('trash_help')}</div>}
       {showFilters && view === 'active' && (
         <div className="filters">
-          <select value={params.get('source') || ''} onChange={(e) => setParam('source', e.target.value)}>
-            <option value="">{t('source')}: {t('any')}</option>
-            {['upload', 'whatsapp', 'telegram', 'email', 'import'].map((s) => <option key={s} value={s}>{t('source_' + s)}</option>)}
-          </select>
-          <select value={params.get('file_type') || ''} onChange={(e) => setParam('file_type', e.target.value)}>
-            <option value="">{t('file_type')}: {t('any')}</option>
-            {['image', 'pdf', 'office', 'mixed'].map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select value={params.get('review') || ''} onChange={(e) => setParam('review', e.target.value)}>
-            <option value="">{t('review_status')}: {t('any')}</option>
-            <option value="needs_review">{t('needs_review')}</option><option value="check">{t('check')}</option><option value="ok">{t('ok')}</option>
-          </select>
-          <select value={params.get('language') || ''} onChange={(e) => setParam('language', e.target.value)}>
-            <option value="">{t('languages')}: {t('any')}</option><option value="ru">ru</option><option value="en">en</option><option value="mixed">mixed</option>
-          </select>
+          <Select prefix={t('source')} value={params.get('source') || ''} onChange={(v) => setParam('source', v)}
+            options={[{ value: '', label: t('any') }, ...['upload', 'whatsapp', 'telegram', 'email', 'import'].map((x) => ({ value: x, label: t('source_' + x) }))]} />
+          <Select prefix={t('file_type')} value={params.get('file_type') || ''} onChange={(v) => setParam('file_type', v)}
+            options={[{ value: '', label: t('any') }, ...['image', 'pdf', 'office', 'mixed'].map((x) => ({ value: x, label: t('ft_' + x) }))]} />
+          <Select prefix={t('review_status')} value={params.get('review') || ''} onChange={(v) => setParam('review', v)}
+            options={[{ value: '', label: t('any') }, { value: 'needs_review', label: t('needs_review') }, { value: 'check', label: t('check') }, { value: 'ok', label: t('ok') }]} />
+          <Select prefix={t('languages')} value={params.get('language') || ''} onChange={(v) => setParam('language', v)}
+            options={[{ value: '', label: t('any') }, { value: 'ru', label: 'RU' }, { value: 'en', label: 'EN' }, { value: 'mixed', label: 'RU + EN' }]} />
           <span className="small muted">{t('received')}</span>
           <input type="date" value={params.get('received_from') || ''} onChange={(e) => setParam('received_from', e.target.value)} />
           <input type="date" value={params.get('received_to') || ''} onChange={(e) => setParam('received_to', e.target.value)} />
@@ -119,16 +114,16 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
         <div className="bulkbar">
           <b>{sel.size} {t('selected')}</b>
           {view === 'active' && <>
-            <FolderSelect value={null} placeholder={t('move_to')} onChange={(f) => f && bulk('move', { folder_id: f })} />
-            <TagAdder exclude={[]} onAdd={(id) => bulk('tag_add', { tag_ids: [id] })} />
-            <TagAdder exclude={[]} label={t('remove_tag')} onAdd={(id) => bulk('tag_remove', { tag_ids: [id] })} />
-            <button onClick={() => downloadPost('/api/documents/download-zip', { ids: [...sel], kind: 'pdf' }, 'documents.zip')}>⤓ {t('download_zip')}</button>
-            <button className="danger" onClick={() => bulk('trash')}>🗑 {t('to_trash')}</button>
+            <FolderMenu onPick={(f) => bulk('move', { folder_id: f })} />
+            <TagAdder exclude={[]} icon={<TagIcon size={15} />} label={t('add_tag')} onAdd={(id) => bulk('tag_add', { tag_ids: [id] })} />
+            <TagAdder exclude={[]} icon={<Tags size={15} />} label={t('remove_tag')} noCreate onAdd={(id) => bulk('tag_remove', { tag_ids: [id] })} />
+            <button onClick={() => downloadPost('/api/documents/download-zip', { ids: [...sel], kind: 'pdf' }, 'documents.zip')}><Download size={15} /> {t('download_zip')}</button>
+            <button className="danger" onClick={() => bulk('trash')}><Trash2 size={15} /> {t('to_trash')}</button>
           </>}
-          {view === 'trash' && <button onClick={() => bulk('restore')}>{t('restore')}</button>}
+          {view === 'trash' && <button onClick={() => bulk('restore')}><ArchiveRestore size={15} /> {t('restore')}</button>}
           {(view === 'trash' || view === 'rejected') && user.role === 'admin' && <button className="danger" onClick={() => purge([...sel])}>{t('purge')}</button>}
           <button className="link" onClick={() => setSel(new Set(items.map((d) => d.id)))}>{t('select_all')}</button>
-          <button className="link" onClick={() => setSel(new Set())}>{t('clear_selection')}</button>
+          <button className="link" onClick={() => setSel(new Set())}><X size={14} /> {t('clear_selection')}</button>
         </div>
       )}
       {!loading && items.length === 0 && <div className="page-pad muted">{t('nothing_found')}</div>}
@@ -174,7 +169,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           </tbody>
         </table>
       )}
-      {items.length < total && <div style={{ textAlign: 'center', padding: 16 }}><button onClick={() => setLimit(limit + PAGE)}>…</button></div>}
+      {items.length < total && <div style={{ textAlign: 'center', padding: 16 }}><button onClick={() => setLimit(limit + PAGE)}>{t('load_more')}</button></div>}
       {upload && <UploadModal folderId={folderId} onClose={() => setUpload(false)} />}
     </div>
   )

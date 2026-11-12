@@ -4,6 +4,8 @@ import { api } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
 import { FolderSelect, fmtBytes, fmtDate, TagAdder, TagChips, TierBadge } from '../components/Pickers'
+import { Menu, Select, useDialog } from '../components/ui'
+import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, History, Maximize, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
 
 const STAGES = ['quality', 'acceptance', 'crop', 'orientation', 'dewarp', 'deskew', 'cleanup', 'ocr', 'layout', 'consistency', 'outputs']
 type Pt = [number, number]
@@ -12,6 +14,7 @@ export default function DocumentView() {
   const { id } = useParams()
   const { t } = useT()
   const { user, reload: reloadStore, toast } = useStore()
+  const dlg = useDialog()
   const nav = useNavigate()
   const [params] = useSearchParams()
   const q = params.get('q') || ''
@@ -35,6 +38,12 @@ export default function DocumentView() {
     return () => clearInterval(i)
   }, [busy, loadPage, loadDoc])
   useEffect(() => { if (page && !busy) setPreview(null) }, [page?.updated_at])
+  // something changed elsewhere (another tab/user, background processing)
+  useEffect(() => {
+    const h = () => { loadDoc(); loadPage() }
+    window.addEventListener('soroka:reload', h)
+    return () => window.removeEventListener('soroka:reload', h)
+  }, [loadDoc, loadPage])
   // keyboard: page navigation
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -61,26 +70,23 @@ export default function DocumentView() {
   return (
     <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', height: '100%' }}>
       <div className="doc-head">
-        <button className="icon" onClick={() => nav(-1)} title={t('back')}>←</button>
+        <button className="icon" onClick={() => nav(-1)} title={t('back')}><ArrowLeft size={18} /></button>
         <input className="title-input" defaultValue={doc.title} key={doc.title} onBlur={(e) => e.target.value !== doc.title && patch({ title: e.target.value })} />
         <TierBadge tier={doc.needs_review ? 'low' : doc.tier} status={doc.status} />
-        <FolderSelect value={doc.folder_id} onChange={(f) => f && patch({ folder_id: f })} />
+        <FolderSelect value={doc.folder_id} allowEmpty onChange={(f) => patch(f ? { folder_id: f } : { clear_folder: true })} />
         <input type="date" title={t('doc_date')} value={doc.document_date ? doc.document_date.slice(0, 10) : ''}
           onChange={(e) => patch(e.target.value ? { document_date: e.target.value } : { clear_date: true })} />
         <TagChips ids={doc.tags} onRemove={(tid) => patch({ tag_ids: doc.tags.filter((x: number) => x !== tid) })} />
         <TagAdder exclude={doc.tags} onAdd={(tid) => patch({ tag_ids: [...doc.tags, tid] })} />
         <span className="spacer" />
-        <select value="" onChange={(e) => { if (e.target.value) window.open(e.target.value, '_blank'); e.target.value = '' }}>
-          <option value="">⤓ {t('download')}</option>
-          {doc.has_pdf && <option value={`/api/documents/${doc.id}/download?kind=pdf`}>{t('processed_pdf')}</option>}
-          <option value={`/api/documents/${doc.id}/download?kind=original`}>{t('original')}</option>
-          <option value={`/api/documents/${doc.id}/download?kind=text`}>{t('plain_text')}</option>
-        </select>
+        <Menu icon={<Download size={15} />} label={t('download')} align="right"
+          items={[...(doc.has_pdf ? [{ key: 'pdf', label: t('processed_pdf') }] : []), { key: 'original', label: t('original') }, { key: 'text', label: t('plain_text') }]}
+          onSelect={(k) => window.open(`/api/documents/${doc.id}/download?kind=${k}`, '_blank')} />
         {doc.status === 'rejected' && <button className="primary" onClick={() => post(`/api/documents/${doc.id}/rescue`)}>{t('rescue')}</button>}
-        {!trashed && <button title={t('reprocess')} onClick={() => post(`/api/documents/${doc.id}/reprocess`)}>↻</button>}
-        {!trashed && <button className="danger" title={t('to_trash')} onClick={async () => { await api('/api/documents/bulk', { body: { ids: [doc.id], action: 'trash' } }); reloadStore(); nav(-1) }}>🗑</button>}
-        {trashed && <button onClick={async () => { await api('/api/documents/bulk', { body: { ids: [doc.id], action: 'restore' } }); loadDoc(); reloadStore() }}>{t('restore')}</button>}
-        {user.role === 'admin' && (trashed || doc.status === 'rejected') && <button className="danger" onClick={async () => { if (confirm(t('confirm_purge'))) { await api(`/api/documents/${doc.id}`, { method: 'DELETE' }); reloadStore(); nav('/') } }}>{t('purge')}</button>}
+        {!trashed && <button title={t('reprocess')} onClick={() => post(`/api/documents/${doc.id}/reprocess`)}><RefreshCw size={15} /></button>}
+        {!trashed && <button className="danger" title={t('to_trash')} onClick={async () => { await api('/api/documents/bulk', { body: { ids: [doc.id], action: 'trash' } }); reloadStore(); nav(-1) }}><Trash2 size={15} /></button>}
+        {trashed && <button onClick={async () => { await api('/api/documents/bulk', { body: { ids: [doc.id], action: 'restore' } }); loadDoc(); reloadStore() }}><ArchiveRestore size={15} /> {t('restore')}</button>}
+        {user.role === 'admin' && (trashed || doc.status === 'rejected') && <button className="danger" onClick={async () => { if (await dlg.confirm({ title: t('purge') + '?', message: t('confirm_purge'), ok: t('purge'), danger: true })) { await api(`/api/documents/${doc.id}`, { method: 'DELETE' }); reloadStore(); nav('/') } }}>{t('purge')}</button>}
       </div>
       <div className="viewer">
         <div className="thumbs">
@@ -193,7 +199,7 @@ function CropEditor({ page, onApply, onCancel }: { page: any; onApply: (q: Pt[])
         {cands.map((c: any, i: number) => (
           <button key={c.method} onClick={() => setQuad(c.quad)} style={{ borderColor: colors[i % colors.length] }}>{c.method} · {c.score.toFixed(2)}</button>
         ))}
-        <button onClick={() => setQuad([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]])}>⛶</button>
+        <button title={t('full_page')} onClick={() => setQuad([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]])}><Maximize size={15} /></button>
         <span className="spacer" />
         <button onClick={onCancel}>{t('cancel')}</button>
         <button className="primary" onClick={() => onApply(quad)}>{t('apply')}</button>
@@ -215,12 +221,12 @@ function PipelinePanel({ page, edit, post, setMode, mode, setPreview }: any) {
     <div>
       <div className="row" style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
         <TierBadge tier={page.reviewed ? 'high' : page.tier} status={page.status} />
-        {page.reviewed && <span className="small muted">✓ {t('reviewed')}</span>}
+        {page.reviewed && <span className="small muted icon-text"><Check size={13} /> {t('reviewed')}</span>}
         <span className="spacer" />
-        <button title={t('undo')} disabled={curIdx <= 0} onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: hist[curIdx - 1].version })}>↶</button>
-        <button title={t('redo')} disabled={curIdx < 0 || curIdx >= hist.length - 1} onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: hist[curIdx + 1].version })}>↷</button>
-        {isImage && <button title={t('reset_auto')} onClick={() => post(`/api/pages/${page.id}/reset`)}>⟲ auto</button>}
-        {!page.reviewed && <button onClick={() => post(`/api/pages/${page.id}/review`, { action: 'accept' })}>✓</button>}
+        <button title={t('undo')} disabled={curIdx <= 0} onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: hist[curIdx - 1].version })}><Undo2 size={15} /></button>
+        <button title={t('redo')} disabled={curIdx < 0 || curIdx >= hist.length - 1} onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: hist[curIdx + 1].version })}><Redo2 size={15} /></button>
+        {isImage && <button title={t('reset_auto')} onClick={() => post(`/api/pages/${page.id}/reset`)}><RotateCcw size={15} /> {t('auto')}</button>}
+        {!page.reviewed && <button title={t('mark_reviewed')} onClick={() => post(`/api/pages/${page.id}/review`, { action: 'accept' })}><CheckCheck size={15} /></button>}
       </div>
       {STAGES.map((s) => {
         const d = st[s] || {}
@@ -250,7 +256,7 @@ function PipelinePanel({ page, edit, post, setMode, mode, setPreview }: any) {
             <span style={{ fontWeight: h.current ? 700 : 400 }}>v{h.version}</span>
             <span className="muted">{h.note}</span><span className="spacer" />
             <span className="muted">{fmtDate(h.created_at, true)}</span>
-            {!h.current && <button className="link" onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: h.version })}>↺</button>}
+            {!h.current && <button className="link" onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: h.version })} title={t('restore')}><History size={14} /></button>}
           </div>
         ))}
       </div>
@@ -275,6 +281,7 @@ function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: a
   const [cl, setCl] = useState({ mode: rec.cleanup.mode || 'gray', strength: rec.cleanup.strength ?? 1 })
   useEffect(() => { setDeskew(rec.deskew.angle); setCl({ mode: rec.cleanup.mode || 'gray', strength: rec.cleanup.strength ?? 1 }) }, [page.recipe_version])
   const angle = rec.orientation.angle || 0
+  const [ocrLangs, setOcrLangs] = useState<string>(rec.ocr.langs || 'rus+eng')
   switch (stage) {
     case 'acceptance':
       return (
@@ -284,12 +291,12 @@ function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: a
         </div>
       )
     case 'crop':
-      return <div className="row"><button className={mode === 'crop' ? 'active' : ''} onClick={() => setMode(mode === 'crop' ? 'result' : 'crop')}>✥ {t('edit_corners')}</button></div>
+      return <div className="row"><button className={mode === 'crop' ? 'active' : ''} onClick={() => setMode(mode === 'crop' ? 'result' : 'crop')}><Crop size={15} /> {t('edit_corners')}</button></div>
     case 'orientation':
       return (
         <div className="row">
-          <button onClick={() => edit('orientation', { angle: (angle + 270) % 360 })}>⟲ 90°</button>
-          <button onClick={() => edit('orientation', { angle: (angle + 90) % 360 })}>⟳ 90°</button>
+          <button onClick={() => edit('orientation', { angle: (angle + 270) % 360 })}><RotateCcw size={15} /> 90°</button>
+          <button onClick={() => edit('orientation', { angle: (angle + 90) % 360 })}><RotateCw size={15} /> 90°</button>
           <button onClick={() => edit('orientation', { angle: (angle + 180) % 360 })}>180°</button>
           <span className="small muted">{angle}°</span>
         </div>
@@ -319,10 +326,8 @@ function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: a
     case 'ocr':
       return (
         <div className="row">
-          <select defaultValue={rec.ocr.langs} id={`ocr-${page.id}`}>
-            <option value="rus+eng">rus+eng</option><option value="rus">rus</option><option value="eng">eng</option>
-          </select>
-          <button onClick={() => edit('ocr', { langs: (document.getElementById(`ocr-${page.id}`) as HTMLSelectElement).value })}>{t('rerun')}</button>
+          <Select value={ocrLangs} onChange={setOcrLangs} options={[{ value: 'rus+eng', label: 'RU + EN' }, { value: 'rus', label: 'RU' }, { value: 'eng', label: 'EN' }]} />
+          <button onClick={() => edit('ocr', { langs: ocrLangs })}><RefreshCw size={15} /> {t('rerun')}</button>
         </div>
       )
     default:
@@ -345,7 +350,7 @@ function InfoPanel({ doc }: { doc: any }) {
         {ev?.chat_name && <><span>{t('chat')}</span><span>{ev.chat_name}</span></>}
         {(ev?.sender_name || ev?.sender_phone || ev?.sender_email) && <><span>{t('sender')}</span><span>{[ev.sender_name, ev.sender_phone, ev.sender_username, ev.sender_email].filter(Boolean).join(' · ')}</span></>}
         {ev?.sent_at && <><span>{t('sent_at')}</span><span>{fmtDate(ev.sent_at, true)}</span></>}
-        {ev?.forwarded && <><span>{t('forwarded')}</span><span>✓</span></>}
+        {ev?.forwarded && <><span>{t('forwarded')}</span><span><Check size={13} /></span></>}
         {ev?.forced && <><span>{t('forced')}</span><span>{ev.force_reason}</span></>}
         {ev?.extra?.subject && <><span>Subject</span><span>{ev.extra.subject}</span></>}
         {ev?.extra?.from && <><span>From</span><span>{ev.extra.from}</span></>}
@@ -373,7 +378,7 @@ function InfoPanel({ doc }: { doc: any }) {
           </div>
         ))}
       </div>
-      {doc.versions.length > 1 && <div><label>{t('versions')}</label>{doc.versions.map((v: any) => <div key={v.id} className="small">v{v.number} · {v.pages} {t('pages').toLowerCase()} · {v.note} {v.current ? '✓' : ''}</div>)}</div>}
+      {doc.versions.length > 1 && <div><label>{t('versions')}</label>{doc.versions.map((v: any) => <div key={v.id} className="small">v{v.number} · {v.pages} {t('pages').toLowerCase()} · {v.note} {v.current && <Check size={12} />}</div>)}</div>}
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { useT } from '../i18n'
 import { useStore } from '../store'
 import { FolderSelect, TagAdder, TagChips } from './Pickers'
 import { Modal } from './Reauth'
+import { UploadCloud, X } from 'lucide-react'
 
 type Item = { file: File; path: string[] } // path = sub-folders (from folder uploads / drag & drop)
 
@@ -25,7 +26,7 @@ export default function UploadModal({ folderId, onClose }: { folderId: number | 
   const { t } = useT()
   const { folders, reload, toast } = useStore()
   const [items, setItems] = useState<Item[]>([])
-  const [folder, setFolder] = useState<number | null>(folderId ?? folders.find((f) => f.is_system)?.id ?? null)
+  const [folder, setFolder] = useState<number | null>(folderId ?? null)
   const [tagIds, setTagIds] = useState<number[]>([])
   const [combine, setCombine] = useState(false)
   const [low, setLow] = useState(false)
@@ -104,13 +105,14 @@ export default function UploadModal({ folderId, onClose }: { folderId: number | 
     <Modal onClose={() => !busy && onClose()}>
       <h2>{t('upload_title')}</h2>
       <div className={'dropzone' + (over ? ' over' : '')} onDragOver={(e) => { e.preventDefault(); setOver(true) }} onDragLeave={() => setOver(false)} onDrop={onDrop}>
+        <UploadCloud size={28} className="dz-icon" /><br />
         {t('drop_here')} <button className="link" onClick={() => fileRef.current?.click()}>{t('choose_files')}</button> / <button className="link" onClick={() => dirRef.current?.click()}>{t('choose_folder')}</button>
         <input ref={fileRef} type="file" multiple hidden onChange={(e) => addFiles(e.target.files)} />
         <input ref={dirRef} type="file" multiple hidden {...({ webkitdirectory: '' } as any)} onChange={(e) => addFiles(e.target.files)} />
-        {items.length > 0 && <div style={{ marginTop: 10, color: 'var(--text)' }}>{items.length} {t('files')} <button className="link" onClick={() => setItems([])}>×</button></div>}
+        {items.length > 0 && <div style={{ marginTop: 10, color: 'var(--text)' }}>{items.length} {t('files')} <button className="link" title={t('clear_selection')} onClick={() => setItems([])}><X size={14} /></button></div>}
       </div>
       <label>{t('target_folder')}</label>
-      <FolderSelect value={folder} onChange={setFolder} />
+      <FolderSelect value={folder} allowEmpty onChange={setFolder} />
       <label>{t('tags')}</label>
       <div className="row"><TagChips ids={tagIds} onRemove={(id) => setTagIds(tagIds.filter((x) => x !== id))} /><TagAdder exclude={tagIds} onAdd={(id) => setTagIds([...tagIds, id])} /></div>
       <div className="col" style={{ marginTop: 12 }}>
