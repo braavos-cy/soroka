@@ -632,5 +632,33 @@ def stats(p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
                                                                   m.Document.trashed_at.is_(None),
                                                                   m.Document.status != "rejected").count(),
             "trash": db.query(m.Document).filter(m.Document.trashed_at.is_not(None)).count(),
+            "rejected_new": _rejected_new(db, p.user),
             "tag_max_length": appsettings.get(db, "tag_max_length"),
+            "version": _data_version(db),
             "queues": queue_lengths()}
+
+
+def _rejected_new(db: DB, u: m.User) -> int:
+    q = db.query(m.RejectedItem).join(m.Document, m.Document.id == m.RejectedItem.document_id).filter(
+        m.Document.status == "rejected", m.Document.trashed_at.is_(None))
+    if u.rejected_seen_at is not None:
+        q = q.filter(m.RejectedItem.rejected_at > u.rejected_seen_at)
+    return q.count()
+
+
+def _data_version(db: DB) -> str:
+    """Cheap fingerprint of everything the UI lists; changes whenever documents, folders or tags change."""
+    row = db.execute(text("""
+        SELECT (SELECT count(*) FROM document), (SELECT max(updated_at) FROM document),
+               (SELECT count(*) FROM document_tag),
+               (SELECT md5(coalesce(string_agg(id || ':' || coalesce(parent_id, 0) || ':' || name, ',' ORDER BY id), '')) FROM folder),
+               (SELECT md5(coalesce(string_agg(id || ':' || name || ':' || color, ',' ORDER BY id), '')) FROM tag),
+               (SELECT count(*) FROM page), (SELECT max(updated_at) FROM page)""")).one()
+    return "|".join(str(x) for x in row)
+
+
+@router.post("/rejected/seen")
+def rejected_seen(p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
+    p.user.rejected_seen_at = now()
+    db.commit()
+    return {"ok": True}
