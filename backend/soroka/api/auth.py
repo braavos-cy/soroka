@@ -214,7 +214,7 @@ class PasswordIn(BaseModel):
 def change_password(body: PasswordIn, request: Request, p: Principal = Depends(current), db: DB = Depends(get_db)):
     if not verify_password(p.user.password_hash, body.current_password):
         raise HTTPException(401, "invalid_credentials")
-    if err := check_password_policy(body.new_password):
+    if err := check_password_policy(body.new_password, p.user.email, body.current_password):
         raise HTTPException(400, err)
     p.user.password_hash = hash_password(body.new_password)
     p.user.must_change_password = False
