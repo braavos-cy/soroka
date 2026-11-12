@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session as DB
 from .. import appsettings
 from .. import models as m
 from ..db import get_db, now
-from ..deps import Principal, admin_reauth, audit, client_ip, require_reauth, ui_user
+from ..deps import Principal, admin, admin_reauth, audit, client_ip, require_reauth, ui_user
 from ..jobs import enqueue_document, enqueue_finalize, enqueue_page
 from ..pipeline.recipe import EDITABLE, apply_edit, default_recipe, normalize
 from ..search import build_tsquery, current_page_ids, headline, index_document, rank
@@ -296,7 +296,7 @@ def reprocess(doc_id: int, p: Principal = Depends(ui_user), db: DB = Depends(get
 
 
 @router.delete("/documents/{doc_id}")
-def purge_document(doc_id: int, request: Request, p: Principal = Depends(admin_reauth), db: DB = Depends(get_db)):
+def purge_document(doc_id: int, request: Request, p: Principal = Depends(admin), db: DB = Depends(get_db)):
     """Permanent deletion incl. derived data, renditions, index entries and context (GDPR, §12)."""
     d = _get_doc(db, doc_id)
     purge(db, d)
@@ -341,7 +341,7 @@ def purge(db: DB, d: m.Document) -> None:
 
 
 @router.post("/trash/empty")
-def empty_trash(request: Request, p: Principal = Depends(admin_reauth), db: DB = Depends(get_db)):
+def empty_trash(request: Request, p: Principal = Depends(admin), db: DB = Depends(get_db)):
     docs = db.query(m.Document).filter(m.Document.trashed_at.is_not(None)).all()
     for d in docs:
         purge(db, d)
