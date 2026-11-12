@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 def user_out(u: m.User) -> dict:
     return {"id": u.id, "email": u.email, "name": u.name, "role": u.role, "is_active": u.is_active,
-            "totp_enabled": u.totp_enabled, "ui_lang": u.ui_lang, "must_change_password": u.must_change_password,
+            "totp_enabled": u.totp_enabled, "ui_lang": u.ui_lang, "include_subfolders": u.include_subfolders, "must_change_password": u.must_change_password,
             "created_at": u.created_at, "last_login_at": u.last_login_at}
 
 
@@ -235,6 +235,18 @@ def set_lang(body: LangIn, p: Principal = Depends(ui_user), db: DB = Depends(get
         p.user.ui_lang = body.ui_lang
         db.commit()
     return {"ok": True}
+
+
+class PrefsIn(BaseModel):
+    include_subfolders: bool | None = None
+
+
+@router.post("/prefs")
+def set_prefs(body: PrefsIn, p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
+    if body.include_subfolders is not None:
+        p.user.include_subfolders = body.include_subfolders
+    db.commit()
+    return user_out(p.user)
 
 
 # ---------------------------------------------------------------- sessions

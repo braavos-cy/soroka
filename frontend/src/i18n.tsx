@@ -82,7 +82,7 @@ const en = {
   sort_received_desc: 'Newest received', sort_received_asc: 'Oldest received', sort_date_desc: 'Document date', sort_title: 'Title',
   layout_grid: 'Grid', layout_list: 'List', load_more: 'Load more', full_page: 'Whole image', auto: 'Auto',
   relink_confirm: 'The bot will be logged out of WhatsApp and a new QR code will be shown.', waiting: 'Waiting…', edit: 'Edit',
-  create_tag: 'Create tag «{name}»', find_or_create_tag: 'Find or create a tag…', type_to_create_tag: 'Type a name to create a tag', reset_2fa_confirm: 'The user will be logged out and must set up two-factor authentication again at the next login.', tag_max_length: 'Max. tag length (characters)', err_tag_too_long: 'The tag name is too long', hide_sidebar: 'Hide sidebar', show_sidebar: 'Show sidebar', resize_sidebar: 'Drag to resize, double-click to reset', role_user: 'User', role_admin: 'Administrator', token_name_hint: 'e.g. Chrome laptop',
+  create_tag: 'Create tag «{name}»', find_or_create_tag: 'Find or create a tag…', type_to_create_tag: 'Type a name to create a tag', reset_2fa_confirm: 'The user will be logged out and must set up two-factor authentication again at the next login.', tag_max_length: 'Max. tag length (characters)', err_tag_too_long: 'The tag name is too long', hide_sidebar: 'Hide sidebar', show_sidebar: 'Show sidebar', resize_sidebar: 'Drag to resize, double-click to reset', preferences: 'Preferences', pref_include_subfolders: 'Show documents from subfolders', pref_include_subfolders_hint: 'When a folder is selected, also list the documents in its subfolders.', role_user: 'User', role_admin: 'Administrator', token_name_hint: 'e.g. Chrome laptop',
 }
 type Key = keyof typeof en
 
@@ -168,7 +168,7 @@ const ru: Partial<Record<Key, string>> = {
   sort_received_desc: 'Сначала новые', sort_received_asc: 'Сначала старые', sort_date_desc: 'По дате документа', sort_title: 'По названию',
   layout_grid: 'Плитка', layout_list: 'Список', load_more: 'Показать ещё', full_page: 'Всё изображение', auto: 'Авто',
   relink_confirm: 'Бот выйдет из WhatsApp, и появится новый QR-код.', waiting: 'Ожидание…', edit: 'Изменить',
-  create_tag: 'Создать тег «{name}»', find_or_create_tag: 'Найти или создать тег…', type_to_create_tag: 'Введите название, чтобы создать тег', reset_2fa_confirm: 'Пользователь будет разлогинен и при следующем входе должен заново настроить двухфакторную аутентификацию.', tag_max_length: 'Макс. длина тега (символов)', err_tag_too_long: 'Слишком длинное название тега', hide_sidebar: 'Скрыть панель', show_sidebar: 'Показать панель', resize_sidebar: 'Перетащите для изменения ширины, двойной клик — сброс', role_user: 'Пользователь', role_admin: 'Администратор', token_name_hint: 'например, ноутбук Chrome',
+  create_tag: 'Создать тег «{name}»', find_or_create_tag: 'Найти или создать тег…', type_to_create_tag: 'Введите название, чтобы создать тег', reset_2fa_confirm: 'Пользователь будет разлогинен и при следующем входе должен заново настроить двухфакторную аутентификацию.', tag_max_length: 'Макс. длина тега (символов)', err_tag_too_long: 'Слишком длинное название тега', hide_sidebar: 'Скрыть панель', show_sidebar: 'Показать панель', resize_sidebar: 'Перетащите для изменения ширины, двойной клик — сброс', preferences: 'Настройки', pref_include_subfolders: 'Показывать документы из подпапок', pref_include_subfolders_hint: 'При выборе папки показывать также документы из её подпапок.', role_user: 'Пользователь', role_admin: 'Администратор', token_name_hint: 'например, ноутбук Chrome',
 }
 
 export type Lang = 'ru' | 'en'

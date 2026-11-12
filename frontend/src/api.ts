@@ -42,7 +42,7 @@ export async function downloadPost(path: string, body: any, filename: string) {
 
 export type Folder = { id: number; parent_id: number | null; name: string; is_system: boolean; count: number }
 export type Tag = { id: number; name: string; color: string; count: number }
-export type User = { id: number; email: string; name: string; role: string; totp_enabled: boolean; ui_lang: string; must_change_password: boolean; is_active: boolean; last_login_at?: string; created_at?: string }
+export type User = { id: number; email: string; name: string; role: string; totp_enabled: boolean; ui_lang: string; include_subfolders?: boolean; must_change_password: boolean; is_active: boolean; last_login_at?: string; created_at?: string }
 export type DocSummary = {
   id: number; title: string; folder_id: number; status: string; tier: string | null; needs_review: boolean
   page_count: number; received_at: string; document_date: string | null; source: string; file_type: string

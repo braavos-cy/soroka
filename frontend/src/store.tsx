@@ -11,12 +11,16 @@ type Store = {
   rejectedNew: number
   tagMaxLen: number
   reload: () => void
+  updateUser: (patch: Partial<User>) => void
   toast: (msg: string) => void
 }
 export const StoreCtx = createContext<Store>(null as any)
 export const useStore = () => useContext(StoreCtx)
 
-export function StoreProvider({ user, children }: { user: User; children: React.ReactNode }) {
+export function StoreProvider({ user: initialUser, children }: { user: User; children: React.ReactNode }) {
+  const [user, setUser] = useState<User>(initialUser)
+  useEffect(() => setUser(initialUser), [initialUser])
+  const updateUser = useCallback((patch: Partial<User>) => setUser((u) => ({ ...u, ...patch })), [])
   const [folders, setFolders] = useState<Folder[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [reviewCount, setReviewCount] = useState(0)
@@ -56,7 +60,7 @@ export function StoreProvider({ user, children }: { user: User; children: React.
   useEffect(() => { if (loc.pathname === '/rejected') poll() }, [loc.pathname])
   const toast = useCallback((m: string) => { setMsg(m); setTimeout(() => setMsg(null), 3500) }, [])
   return (
-    <StoreCtx.Provider value={{ user, folders, tags, reviewCount, rejectedNew, tagMaxLen, reload, toast }}>
+    <StoreCtx.Provider value={{ user, folders, tags, reviewCount, rejectedNew, tagMaxLen, reload, updateUser, toast }}>
       {children}
       {msg && <div className="toast">{errText(t, msg)}</div>}
     </StoreCtx.Provider>
