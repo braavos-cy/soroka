@@ -12,7 +12,10 @@ docker compose up -d --build
 docker compose --profile security up -d
 ```
 
-* UI: `https://<SITE_ADDRESS>` (locally `https://localhost:8443`; accept the local CA warning once)
+* UI: `https://<SITE_ADDRESS>` (locally `https://localhost:8443`). Locally, trust Caddy's CA instead of clicking through
+  the warning — browsers disable password saving/suggestions on pages with certificate errors:
+  `docker compose exec web cat /data/caddy/pki/authorities/local/root.crt > caddy-root.crt` then (Windows)
+  `certutil -user -addstore Root caddy-root.crt` and restart the browser.
 * API docs (OpenAPI): `/api/docs`
 * First login: `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` → you must set a new password and enrol TOTP.
 
