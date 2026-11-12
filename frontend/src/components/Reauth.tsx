@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { api, setReauthHandler } from '../api'
-import { useT } from '../i18n'
+import { errText, useT } from '../i18n'
 
 export function ReauthModal() {
   const { t } = useT()
@@ -16,7 +16,7 @@ export function ReauthModal() {
   const finish = (ok: boolean) => { setOpen(false); setPw(''); setCode(''); resolver.current?.(ok) }
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    try { await api('/api/auth/reauth', { body: { password: pw, code } }); finish(true) } catch (e: any) { setErr(e.detail) }
+    try { await api('/api/auth/reauth', { body: { password: pw, code } }); finish(true) } catch (e: any) { setErr(errText(t, e.detail)) }
   }
   if (!open) return null
   return (
@@ -25,7 +25,7 @@ export function ReauthModal() {
         <h2>{t('reauth_title')}</h2>
         <div className="muted">{t('reauth_text')}</div>
         <label>{t('password')}</label>
-        <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus />
+        <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus autoComplete="current-password" />
         <label>{t('totp_code')}</label>
         <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
         {err && <div className="err">{err}</div>}
@@ -35,7 +35,7 @@ export function ReauthModal() {
   )
 }
 
-export function Modal({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+export function Modal({ children, onClose, wide, small }: { children: React.ReactNode; onClose: () => void; wide?: boolean; small?: boolean }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', h)
@@ -43,7 +43,7 @@ export function Modal({ children, onClose, wide }: { children: React.ReactNode; 
   }, [onClose])
   return (
     <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={'modal' + (wide ? ' wide' : '')}>{children}</div>
+      <div className={'modal' + (wide ? ' wide' : '') + (small ? ' small' : '')} role="dialog" aria-modal="true">{children}</div>
     </div>
   )
 }
