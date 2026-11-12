@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
-import { fmtDate, TierBadge } from '../components/Pickers'
+import { FileName, fmtDate, TierBadge } from '../components/Pickers'
 import { Check, FileX, PenSquare } from 'lucide-react'
 
 type Item = { page_id: number; document_id: number; title: string; tier: string; page_no: number; received_at: string; flagged: { stage: string; tier: string; method: string }[] }
@@ -52,8 +52,8 @@ export default function ReviewPage() {
           {items.map((it, i) => (
             <div key={it.page_id} className={'item' + (i === idx ? ' sel' : '')} onClick={() => setIdx(i)}>
               <img src={`/api/pages/${it.page_id}/image?variant=thumb`} alt="" />
-              <div className="col" style={{ gap: 4 }}>
-                <b>{it.title}</b>
+              <div className="col" style={{ gap: 4, minWidth: 0 }}>
+                <FileName name={it.title} className="strong" />
                 <span className="small muted">{t('page')} {it.page_no} · {fmtDate(it.received_at)}</span>
                 <span className="row" style={{ gap: 4 }}>{it.flagged.map((f) => <span key={f.stage} className="chip">{t('stage_' + f.stage)} <TierBadge tier={f.tier} /></span>)}</span>
               </div>

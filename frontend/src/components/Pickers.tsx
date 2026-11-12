@@ -1,3 +1,4 @@
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Folder as FolderIcon, FolderInput, FolderX, Plus, X } from 'lucide-react'
 import { api } from '../api'
 import { useT } from '../i18n'
@@ -21,16 +22,44 @@ export function FolderMenu({ onPick, label }: { onPick: (id: number) => void; la
     onSelect={(k) => onPick(Number(k))} />
 }
 
-export function TagChips({ ids, onRemove }: { ids: number[]; onRemove?: (id: number) => void }) {
+/** Tag chips. With singleLine the chips stay on one line that scrolls horizontally when they do not fit. */
+export function TagChips({ ids, onRemove, singleLine }: { ids: number[]; onRemove?: (id: number) => void; singleLine?: boolean }) {
   const { tags } = useStore()
   const byId = new Map(tags.map((t) => [t.id, t]))
+  const list = ids.map((id) => byId.get(id)).filter(Boolean) as typeof tags
+  const ref = useRef<HTMLDivElement>(null)
+  const [overflow, setOverflow] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const check = () => setOverflow(el.scrollWidth > el.clientWidth + 1)
+    check()
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [list.length, singleLine])
+  // vertical wheel scrolls sideways while there is room to scroll (page scrolling is not hijacked).
+  // Native non-passive listener: React's onWheel is passive and cannot preventDefault.
+  useEffect(() => {
+    const el = ref.current
+    if (!el || !overflow) return
+    const h = (e: WheelEvent) => {
+      if (e.deltaX !== 0 || e.deltaY === 0) return
+      const atEnd = e.deltaY > 0 ? el.scrollLeft + el.clientWidth >= el.scrollWidth - 1 : el.scrollLeft <= 0
+      if (atEnd) return
+      el.scrollLeft += e.deltaY
+      e.preventDefault()
+    }
+    el.addEventListener('wheel', h, { passive: false })
+    return () => el.removeEventListener('wheel', h)
+  }, [overflow])
+  const chips = list.map((tg) => (
+    <span key={tg.id} className="chip"><span className="dot" style={{ background: tg.color }} />{tg.name}
+      {onRemove && <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(tg.id) }}><X size={12} /></button>}</span>
+  ))
+  if (!singleLine) return <span className="row" style={{ gap: 4 }}>{chips}</span>
   return (
-    <span className="row" style={{ gap: 4 }}>
-      {ids.map((id) => byId.get(id)).filter(Boolean).map((tg) => (
-        <span key={tg!.id} className="chip"><span className="dot" style={{ background: tg!.color }} />{tg!.name}
-          {onRemove && <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(tg!.id) }}><X size={12} /></button>}</span>
-      ))}
-    </span>
+    <div ref={ref} className={'chips-line' + (overflow ? ' scrolling' : '')} onClick={(e) => overflow && e.stopPropagation()}>{chips}</div>
   )
 }
 
@@ -92,4 +121,42 @@ export function fmtBytes(n: number) {
   let i = -1
   do { n /= 1024; i++ } while (n >= 1024 && i < u.length - 1)
   return n.toFixed(1) + ' ' + u[i]
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null
+
+/** File-name style truncation: "a-very-long-scan-name.pdf" -> "a-very-lo…me.pdf".
+ *  The tail (last 2 characters of the name + extension) always stays visible. The text is measured, so the
+ *  result is one continuous string with no gap after the ellipsis; recomputed when the available width changes. */
+export function FileName({ name, className }: { name: string; className?: string }) {
+  const n = name || '—'
+  const ref = useRef<HTMLSpanElement>(null)
+  const [text, setText] = useState(n)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const fit = () => {
+      const w = el.clientWidth
+      if (!w) return
+      measureCtx = measureCtx || document.createElement('canvas').getContext('2d')
+      if (!measureCtx) return setText(n)
+      const cs = getComputedStyle(el)
+      measureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`
+      const width = (s: string) => measureCtx!.measureText(s).width
+      if (width(n) <= w) return setText(n)
+      const m = n.match(/^(.*?)(.{0,2}\.[A-Za-z0-9]{1,6})$/)
+      const [head, tail] = m && m[1] ? [m[1], m[2]] : [n, '']
+      let lo = 0, hi = head.length
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1
+        if (width(head.slice(0, mid) + '…' + tail) <= w) lo = mid; else hi = mid - 1
+      }
+      setText(head.slice(0, lo).trimEnd() + '…' + tail)
+    }
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [n])
+  return <span ref={ref} className={'file-name' + (className ? ' ' + className : '')} title={n}>{text}</span>
 }
