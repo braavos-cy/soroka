@@ -82,7 +82,7 @@ def update_folder(fid: int, body: FolderPatch, request: Request, p: Principal = 
 @router.delete("/folders/{fid}")
 def delete_folder(fid: int, request: Request, confirm: bool = False, p: Principal = Depends(ui_user),
                   db: DB = Depends(get_db)):
-    """Non-empty folders need confirm=true; documents inside go to Trash (and to Inbox if restored)."""
+    """Non-empty folders need confirm=true; documents inside go to Trash (restored without a folder)."""
     f = db.get(m.Folder, fid)
     if f is None:
         raise HTTPException(404)
@@ -93,10 +93,8 @@ def delete_folder(fid: int, request: Request, confirm: bool = False, p: Principa
     active = [d for d in docs if d.trashed_at is None]
     if (active or len(ids) > 1) and not confirm:
         raise HTTPException(409, f"not_empty:{len(active)}")
-    from ..ingest import inbox_id
-    inbox = inbox_id(db)
     for d in docs:
-        d.folder_id = inbox  # keep a valid location for restore
+        d.folder_id = None
         if d.trashed_at is None:
             d.trashed_at, d.trashed_by = now(), p.user_id
     db.query(m.RegisteredChat).filter(m.RegisteredChat.folder_id.in_(ids)).update(

@@ -57,12 +57,7 @@ class IngestRejected(Exception):
     pass
 
 
-def inbox_id(db: DB) -> int:
-    f = db.query(m.Folder).filter_by(parent_id=None, is_system=True).first()
-    return f.id
-
-
-def _resolve_destination(db: DB, meta: IngestMeta) -> tuple[int, list[int]]:
+def _resolve_destination(db: DB, meta: IngestMeta) -> tuple[int | None, list[int]]:
     folder_id, tag_ids = meta.folder_id, list(meta.tag_ids)
     if meta.platform in BOT_PLATFORMS:
         reg = db.query(m.RegisteredChat).filter_by(platform=meta.platform, chat_id=meta.chat_id, active=True).first()
@@ -73,13 +68,13 @@ def _resolve_destination(db: DB, meta: IngestMeta) -> tuple[int, list[int]]:
                 raise IngestRejected("override_only_chat")
             folder_id = reg.folder_id or folder_id
             tag_ids = list(reg.tag_ids or []) + tag_ids
-    if folder_id is None or db.get(m.Folder, folder_id) is None:
-        folder_id = inbox_id(db)
+    if folder_id is not None and db.get(m.Folder, folder_id) is None:
+        folder_id = None  # no folder
     valid_tags = {t for (t,) in db.query(m.Tag.id).filter(m.Tag.id.in_(tag_ids or [-1])).all()}
     return folder_id, [t for t in dict.fromkeys(tag_ids) if t in valid_tags]
 
 
-def _ensure_folder_path(db: DB, root_id: int, parts: list[str]) -> int:
+def _ensure_folder_path(db: DB, root_id: int | None, parts: list[str]) -> int | None:
     fid = root_id
     for name in parts:
         name = name.strip()[:300]
@@ -126,7 +121,7 @@ def ingest(db: DB, meta: IngestMeta, files: list[InFile], uploaded_by: int | Non
     db.flush()
 
     # expand zips into (folder, file) groups
-    groups: dict[int, list[InFile]] = {}
+    groups: dict[int | None, list[InFile]] = {}
     skipped: list[dict] = []
     for f in files:
         kind, _ = sniff(f.filename, f.data)

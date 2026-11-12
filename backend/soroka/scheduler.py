@@ -77,7 +77,7 @@ def watch_import_dir(db) -> None:
         if not path.is_file() or done in path.parents or path.name.startswith(".") or path.stat().st_mtime > cutoff:
             continue
         rel = path.relative_to(IMPORT_DIR)
-        from .ingest import _ensure_folder_path, inbox_id
+        from .ingest import _ensure_folder_path
         root = db.query(m.Folder).filter_by(parent_id=None, name="Import").first()
         if root is None:
             root = m.Folder(name="Import")
