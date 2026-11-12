@@ -58,7 +58,7 @@ Done:
 * Recipe-based editing: crop corners (magnifier, candidates), rotation, deskew (live preview), cleanup, OCR languages,
   acceptance; per-stage reset, full history with undo/redo, reset to automatic; correction log.
 * Folders (tree, drag & drop), tags (hierarchy, colors, AND/OR/NOT, rename/merge), bulk actions, trash, rejected area +
-  retention + storage-pressure rule, review queue (keyboard), search (Russian morphology, ё/е, typo tolerance, prefix,
+  retention + storage-pressure rule, review queue, search (Russian morphology, ё/е, typo tolerance, prefix,
   snippets, hit highlighting on page images), downloads, admin export, RU/EN UI.
 
 Next phases:

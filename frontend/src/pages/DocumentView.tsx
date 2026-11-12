@@ -44,16 +44,6 @@ export default function DocumentView() {
     window.addEventListener('soroka:reload', h)
     return () => window.removeEventListener('soroka:reload', h)
   }, [loadDoc, loadPage])
-  // keyboard: page navigation
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName.match(/INPUT|TEXTAREA|SELECT/)) return
-      if (e.key === 'ArrowDown' || e.key === 'PageDown') setPageIdx((i) => Math.min((doc?.pages?.length || 1) - 1, i + 1))
-      if (e.key === 'ArrowUp' || e.key === 'PageUp') setPageIdx((i) => Math.max(0, i - 1))
-    }
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [doc])
 
   const patch = async (body: any) => { try { await api(`/api/documents/${id}`, { method: 'PATCH', body }); loadDoc(); reloadStore() } catch (e: any) { toast(e.detail) } }
   const edit = async (stage: string, value: any, reset = false) => {

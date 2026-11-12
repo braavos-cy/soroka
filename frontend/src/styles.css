@@ -147,7 +147,8 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .login-wrap input { width: 100%; }
 .codes { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; font-family: ui-monospace, monospace; background: var(--panel2); padding: 10px; border-radius: 5px; }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 5px; z-index: 200; }
-.review-list .item { display: grid; grid-template-columns: 90px 1fr auto; gap: 12px; padding: 10px; border-radius: 5px; border: 1px solid var(--border); background: var(--panel); margin-bottom: 8px; cursor: pointer; }
+.review-list .item { display: grid; grid-template-columns: 90px 1fr auto; gap: 12px; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); margin-bottom: 8px; cursor: pointer; }
+.review-list .item:hover { box-shadow: var(--shadow); }
 .review-list .item.sel { outline: 2px solid var(--accent); }
 .review-list img { width: 90px; max-height: 120px; object-fit: contain; background: var(--panel2); }
 .admin-tabs { display: flex; gap: 2px; margin-bottom: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
@@ -201,7 +202,6 @@ button.danger-fill { background: var(--bad); border-color: var(--bad); color: #f
 .icon-text { display: inline-flex; align-items: center; gap: 5px; }
 .pw-rules li { display: flex; align-items: center; gap: 6px; }
 .logo-h { margin: 0; display: flex; align-items: center; gap: 8px; } .logo-h svg { color: var(--accent); }
-kbd { font-family: ui-monospace, monospace; font-size: 11px; padding: 0 4px; border: 1px solid currentColor; border-radius: 3px; opacity: .65; }
 .spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
 .color-input { width: 30px; height: 26px; padding: 1px; cursor: pointer; }
 .dz-icon { color: var(--muted); margin-bottom: 6px; }
@@ -235,3 +235,6 @@ input.switch::after { content: ''; position: absolute; top: 2px; left: 2px; widt
 input.switch:checked { background: var(--accent); }
 input.switch:checked::after { transform: translateX(14px); }
 input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
+.review-grid { display: grid; grid-template-columns: minmax(280px, 1fr) 2fr; gap: 16px; padding: 16px 20px; align-items: start; }
+.review-grid > .card { position: sticky; top: 64px; }
+@media (max-width: 900px) { .review-grid { grid-template-columns: 1fr; } .review-grid > .card { position: static; } }

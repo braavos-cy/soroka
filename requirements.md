@@ -221,7 +221,7 @@ Folders and tags are independent, side-by-side systems, each fully usable on its
 - View re-renders after each change: geometric edits preview instantly client-side; final render on the server in background.
 - Upstream edits re-run downstream automatic stages; manual downstream edits are kept when still valid, otherwise the user is warned.
 - Full edit history per page with undo/redo and "reset to automatic".
-- Review queue: all flagged pages across documents, fast keyboard-driven workflow (accept / pick candidate / open editor).
+- Review queue: all flagged pages across documents, fast workflow (accept / pick candidate / open editor). No keyboard shortcuts.
 
 ## 9. Document tools
 All operations are non-destructive (new version; originals kept; undo available). Pages keep their recipes and corrections when moved between documents.
