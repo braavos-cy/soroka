@@ -240,6 +240,14 @@ button.danger-fill { background: var(--bad); border-color: var(--bad); color: #f
 /* cards: body fills the card so the tag line sits at the bottom */
 .doc-card .body { flex: 1; }
 .doc-card .card-tags { margin-top: auto; padding-top: 4px; min-width: 0; }
+
+/* thin, low-contrast scrollbars everywhere */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 35%, transparent) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+::-webkit-scrollbar-corner { background: transparent; }
 .card-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .card-title .t { flex: 1; }
 .pages-count { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); }
@@ -254,3 +262,5 @@ input.switch::after { content: ''; position: absolute; top: 2px; left: 2px; widt
 input.switch:checked { background: var(--accent); }
 input.switch:checked::after { transform: translateX(14px); }
 input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
+/* badges must never be covered by neighbouring tabs (hover/active backgrounds) or by sticky page bars */
+.topbar { position: relative; z-index: 20; }
