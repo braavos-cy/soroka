@@ -32,9 +32,41 @@ def new_token(nbytes: int = 32) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
-def check_password_policy(pw: str) -> str | None:
-    if len(pw) < 10:
+PASSWORD_MIN_LEN = 12
+PASSWORD_MAX_LEN = 128
+# Base words that make a password guessable even when padded with digits/symbols ("Password2026!").
+_COMMON_WORDS = {
+    "password", "passw0rd", "qwerty", "qwertyuiop", "asdfgh", "zxcvbn", "admin", "administrator", "welcome",
+    "letmein", "iloveyou", "monkey", "dragon", "master", "sunshine", "football", "abc", "abcdef", "secret",
+    "changeme", "default", "soroka", "сорока", "пароль", "йцукен", "привет", "люблю",
+}
+
+
+def check_password_policy(pw: str, email: str | None = None, current: str | None = None) -> str | None:
+    """Return an error code (the first failed rule) or None. Mirrored in frontend/src/password.ts."""
+    if len(pw) < PASSWORD_MIN_LEN:
         return "password_too_short"
+    if len(pw) > PASSWORD_MAX_LEN:
+        return "password_too_long"
+    if not any(c.islower() for c in pw):
+        return "password_no_lower"
+    if not any(c.isupper() for c in pw):
+        return "password_no_upper"
+    if not any(c.isdigit() for c in pw):
+        return "password_no_digit"
+    if all(c.isalnum() for c in pw):
+        return "password_no_symbol"
+    low = pw.lower()
+    if len(set(low)) < 6 or any(low[i] == low[i + 1] == low[i + 2] == low[i + 3] for i in range(len(low) - 3)):
+        return "password_repetitive"
+    letters = "".join(c for c in low if c.isalpha())
+    if letters in _COMMON_WORDS or any(w in low for w in ("password", "qwerty", "soroka", "сорока", "пароль", "йцукен")):
+        return "password_common"
+    local = (email or "").split("@")[0].lower()
+    if len(local) >= 4 and local in low:
+        return "password_contains_email"
+    if current is not None and pw == current:
+        return "password_reused"
     return None
 
 

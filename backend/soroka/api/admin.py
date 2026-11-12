@@ -45,7 +45,7 @@ def create_user(body: UserIn, request: Request, p: Principal = Depends(admin), d
         raise HTTPException(400, "bad_email")
     if db.query(m.User).filter_by(email=email).first():
         raise HTTPException(409, "user_exists")
-    if err := check_password_policy(body.password):
+    if err := check_password_policy(body.password, email):
         raise HTTPException(400, err)
     u = m.User(email=email, name=body.name[:200], role="admin" if body.role == "admin" else "user",
                password_hash=hash_password(body.password), must_change_password=True)
@@ -86,7 +86,7 @@ def update_user(uid: int, body: UserPatch, request: Request, p: Principal = Depe
         db.query(m.Session).filter_by(user_id=u.id).delete()
         changes["reset_2fa"] = True
     if body.password:
-        if err := check_password_policy(body.password):
+        if err := check_password_policy(body.password, u.email):
             raise HTTPException(400, err)
         u.password_hash, u.must_change_password = hash_password(body.password), True
         db.query(m.Session).filter_by(user_id=u.id).delete()
