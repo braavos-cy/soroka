@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session as DB
 
+from .. import appsettings
 from .. import models as m
 from ..db import get_db, now
 from ..deps import Principal, audit, client_ip, ui_user
@@ -123,11 +124,17 @@ def _clean_tag(name: str) -> str:
     return "/".join(p.strip() for p in name.split("/") if p.strip())[:300]
 
 
+def _check_tag_len(db: DB, name: str) -> None:
+    if len(name) > appsettings.get(db, "tag_max_length"):
+        raise HTTPException(400, "tag_too_long")
+
+
 @router.post("/tags")
 def create_tag(body: TagIn, request: Request, p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
     name = _clean_tag(body.name)
     if not name:
         raise HTTPException(400, "name_required")
+    _check_tag_len(db, name)
     if db.query(m.Tag).filter(func.lower(m.Tag.name) == name.lower()).first():
         raise HTTPException(409, "tag_exists")
     t = m.Tag(name=name, color=body.color[:20])
@@ -150,6 +157,12 @@ def update_tag(tid: int, body: TagPatch, request: Request, p: Principal = Depend
         raise HTTPException(404)
     if body.name is not None:
         new = _clean_tag(body.name)
+        if not new:
+            raise HTTPException(400, "name_required")
+        _check_tag_len(db, new)
+        old_name = t.name
+        for child in db.query(m.Tag).filter(m.Tag.name.startswith(old_name + "/")).all():
+            _check_tag_len(db, new + child.name[len(old_name):])
         if db.query(m.Tag).filter(func.lower(m.Tag.name) == new.lower(), m.Tag.id != tid).first():
             raise HTTPException(409, "tag_exists")
         old = t.name

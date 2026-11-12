@@ -14,10 +14,15 @@ DEFAULTS: dict[str, Any] = {
     "min_free_disk_mb": 5120,
     "lockout_attempts": 5,
     "lockout_minutes": 15,
+    "tag_max_length": 40,  # whole tag name incl. spaces and "parent/child" path
     # pipeline thresholds (fusion weights live in pipeline config; these are the user-facing ones)
     "accept_doc_threshold": 0.55,
     "accept_reject_threshold": 0.30,
 }
+
+
+# allowed ranges for numeric settings (values outside are clamped)
+LIMITS: dict[str, tuple[int, int]] = {"tag_max_length": (1, 300)}
 
 
 def get(db: DB, key: str) -> Any:
@@ -38,6 +43,9 @@ def set_many(db: DB, values: dict[str, Any]) -> None:
             continue
         typ = type(DEFAULTS[k])
         v = typ(v) if typ is not bool else bool(v)
+        if k in LIMITS:
+            lo, hi = LIMITS[k]
+            v = max(lo, min(hi, v))
         row = db.get(m.Setting, k)
         if row is None:
             db.add(m.Setting(key=k, value=v))
