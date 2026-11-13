@@ -56,11 +56,25 @@ def order_quad(pts: np.ndarray) -> np.ndarray:
     return np.array([pts[np.argmin(s)], pts[np.argmin(d)], pts[np.argmax(s)], pts[np.argmax(d)]], dtype=np.float32)
 
 
+def _convex(q: np.ndarray) -> bool:
+    return bool(cv2.isContourConvex(q.astype(np.float32).reshape(-1, 1, 2)))
+
+
 def quad_iou(a: np.ndarray, b: np.ndarray) -> float:
     a, b = order_quad(a), order_quad(b)
+    if not (_convex(a) and _convex(b)):  # intersectConvexConvex returns garbage for non-convex input: rasterize
+        x0, y0 = np.minimum(a.min(0), b.min(0))
+        x1, y1 = np.maximum(a.max(0), b.max(0))
+        s = 400.0 / max(1.0, x1 - x0, y1 - y0)
+        sz = (int((y1 - y0) * s) + 2, int((x1 - x0) * s) + 2)
+        ma, mb = np.zeros(sz, np.uint8), np.zeros(sz, np.uint8)
+        cv2.fillPoly(ma, [((a - [x0, y0]) * s).astype(np.int32)], 1)
+        cv2.fillPoly(mb, [((b - [x0, y0]) * s).astype(np.int32)], 1)
+        u = int((ma | mb).sum())
+        return float((ma & mb).sum() / u) if u else 0.0
     inter, _ = cv2.intersectConvexConvex(a, b)
     union = cv2.contourArea(a) + cv2.contourArea(b) - inter
-    return float(inter / union) if union > 0 else 0.0
+    return float(min(1.0, inter / union)) if union > 0 else 0.0
 
 
 def _angles_ok(q: np.ndarray) -> float:
@@ -167,50 +181,178 @@ def _looks_flat_scan(small: np.ndarray) -> float:
     return float(0.5 * light + 0.5 * uniform)
 
 
+def _odd(n: int) -> int:
+    return int(n) | 1
+
+
+def _paper_view(small: np.ndarray) -> np.ndarray:
+    """Text removed by a morphological closing (dark strokes on light paper disappear), result in LAB.
+    Page boundaries survive, text, table grid lines and noise do not."""
+    k = _odd(max(9, min(small.shape[:2]) // 45))
+    closed = cv2.morphologyEx(small, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+    closed = cv2.GaussianBlur(closed, (5, 5), 0)
+    return cv2.cvtColor(closed, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+
+def _contour_quads(mask: np.ndarray, min_area: float, limit: int = 3) -> list[np.ndarray]:
+    cnts, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    out = []
+    for c in sorted(cnts, key=cv2.contourArea, reverse=True)[:limit * 3]:
+        if cv2.contourArea(c) < min_area:
+            break
+        q = _approx_quad(c)
+        if q is None:
+            q = cv2.boxPoints(cv2.minAreaRect(c)).astype(np.float32)
+        out.append(order_quad(q))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _quads_paper_edges(lab: np.ndarray) -> list[np.ndarray]:
+    """Canny on every LAB channel of the text-free view, several sensitivities (catches white-on-light-desk)."""
+    area = lab.shape[0] * lab.shape[1]
+    out = []
+    for lo, hi in ((10, 30), (25, 70)):
+        e = np.zeros(lab.shape[:2], np.uint8)
+        for ch in range(3):
+            e |= cv2.Canny(np.clip(lab[..., ch], 0, 255).astype(np.uint8), lo, hi)
+        e = cv2.dilate(e, np.ones((3, 3), np.uint8), iterations=2)
+        out += _contour_quads(e, 0.1 * area, 2)
+    return out
+
+
+def _quads_paper_threshold(lab: np.ndarray) -> list[np.ndarray]:
+    """Bright, low-chroma, smooth region = paper. Otsu on a paper-likeness map."""
+    L = lab[..., 0]
+    chroma = np.hypot(lab[..., 1] - 128, lab[..., 2] - 128)
+    mu = cv2.blur(L, (15, 15))
+    sd = np.sqrt(np.maximum(cv2.blur(L * L, (15, 15)) - mu * mu, 0))
+    paper = L - 2.0 * chroma - 3.0 * sd
+    paper = cv2.normalize(paper, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    _, th = cv2.threshold(paper, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    k = max(5, lab.shape[1] // 80)
+    th = cv2.morphologyEx(th, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
+    th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+    return _contour_quads(th, 0.1 * lab.shape[0] * lab.shape[1], 2)
+
+
+def _side_samples(q: np.ndarray, i: int, n: int = 40):
+    p0, p1 = q[i], q[(i + 1) % 4]
+    t = np.linspace(0.1, 0.9, n)[:, None]
+    pts = p0 + (p1 - p0) * t
+    d = p1 - p0
+    nrm = np.array([d[1], -d[0]]) / (np.linalg.norm(d) + 1e-9)
+    c = q.mean(0)
+    if np.dot(c - (p0 + p1) / 2, nrm) < 0:  # make the normal point inwards
+        nrm = -nrm
+    return pts, nrm
+
+
+def _boundary_evidence(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tuple[float, float, dict]:
+    """(edge support, inside/outside contrast) along the four sides. Sides on the image border have no
+    outside and are skipped for contrast (page touching the frame)."""
+    h, w = lab.shape[:2]
+    off = max(4.0, min(h, w) * 0.012)
+    gthr = max(6.0, float(np.percentile(grad, 80)))
+    edge, contrast, n_out = [], [], 0
+    for i in range(4):
+        pts, nrm = _side_samples(q, i)
+        inside = pts + nrm * off
+        outside = pts - nrm * off
+        on_border = np.mean((outside[:, 0] < 1) | (outside[:, 1] < 1) | (outside[:, 0] > w - 2) |
+                            (outside[:, 1] > h - 2)) > 0.5
+        xs = np.clip(pts[:, 0].astype(int), 0, w - 1)
+        ys = np.clip(pts[:, 1].astype(int), 0, h - 1)
+        g = np.array([grad[max(0, y - 2):y + 3, max(0, x - 2):x + 3].max() for x, y in zip(xs, ys)])
+        edge.append(float(np.mean(g > gthr)))
+        if on_border:
+            continue
+        n_out += 1
+        ii = np.clip(inside.astype(int), 0, [w - 1, h - 1])
+        oo = np.clip(outside.astype(int), 0, [w - 1, h - 1])
+        de = np.linalg.norm(lab[ii[:, 1], ii[:, 0]] - lab[oo[:, 1], oo[:, 0]], axis=1)
+        contrast.append(float(np.median(de)))
+    edge_s = float(np.mean(sorted(edge)[:3])) if edge else 0.0  # one weak side is tolerated
+    con_s = min(1.0, min(contrast) / 18.0) if contrast else 0.0
+    return edge_s, con_s, {"edge_sides": [round(e, 2) for e in edge], "contrast": [round(c, 1) for c in contrast],
+                           "sides_inside_frame": n_out}
+
+
+def _score_page_quad(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tuple[float, dict]:
+    area_total = float(lab.shape[0] * lab.shape[1])
+    area = cv2.contourArea(q) / area_total
+    area_s = 1.0 if 0.12 <= area <= 0.97 else (0.4 if area > 0.97 else 0.1)
+    convex = _convex(q)
+    ang = _angles_ok(q) if convex else 0.0
+    asp = _aspect_score(q)
+    edge, con, sig = _boundary_evidence(q, lab, grad)
+    score = 0.25 * edge + 0.35 * con + 0.15 * ang + 0.15 * area_s + 0.10 * asp
+    if not convex:
+        score *= 0.5
+    sig.update({"area": round(area, 3), "angles": ang, "aspect": round(asp, 3), "edge": round(edge, 3),
+                "inout_contrast": round(con, 3), "convex": convex})
+    return score, sig
+
+
 def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, dict]:
-    """Returns (candidates, chosen, tier, signals). Quads are in full-resolution pixel coords."""
+    """Returns (candidates, chosen, tier, signals). Quads are in full-resolution pixel coords.
+
+    Candidates come from several detectors (Canny on the photo, Canny on the text-free LAB view at two
+    sensitivities, Otsu threshold, paper-likeness threshold) and are scored on the *evidence for a page boundary*:
+    edge support along each side and colour contrast between just inside and just outside each side. A table or
+    text block inside a scan has paper on both sides of its border -> no contrast -> it loses to the full frame."""
     small, s = downscale(img, 1000)
     g = gray(small)
-    gx = cv2.Sobel(cv2.GaussianBlur(g, (3, 3), 0), cv2.CV_32F, 1, 0)
-    gy = cv2.Sobel(cv2.GaussianBlur(g, (3, 3), 0), cv2.CV_32F, 0, 1)
-    grad = cv2.magnitude(gx, gy)
-    area_total = float(g.shape[0] * g.shape[1])
+    lab = _paper_view(small)
+    gl = cv2.GaussianBlur(lab, (3, 3), 0)
+    grad = np.zeros(g.shape, np.float32)
+    for ch in range(3):
+        grad = np.maximum(grad, cv2.magnitude(cv2.Sobel(gl[..., ch], cv2.CV_32F, 1, 0),
+                                              cv2.Sobel(gl[..., ch], cv2.CV_32F, 0, 1)) / 4)
     H, W = img.shape[:2]
     full = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], dtype=np.float32)
 
+    raw: list[tuple[str, np.ndarray]] = []
+    for name, fn in (("contour_canny", lambda: [x for x in [_quad_canny(g)] if x is not None]),
+                     ("contour_threshold", lambda: [x for x in [_quad_threshold(g)] if x is not None]),
+                     ("paper_edges", lambda: _quads_paper_edges(lab)),
+                     ("paper_region", lambda: _quads_paper_threshold(lab))):
+        for q in fn():
+            q = order_quad(q)
+            if any(quad_iou(q, r) > 0.985 for _, r in raw):  # duplicate
+                continue
+            raw.append((name, q))
+
     cands: list[Candidate] = []
-    raw = {}
-    for name, fn in (("contour_canny", _quad_canny), ("contour_threshold", _quad_threshold)):
-        q = fn(g)
-        if q is None:
-            continue
-        q = order_quad(q)
-        sc, sig = _score_quad(q, area_total, grad)
-        raw[name] = q
+    scored = []
+    for name, q in raw:
+        sc, sig = _score_page_quad(q, lab, grad)
+        scored.append((name, q, sc, sig))
+    # agreement between independent detectors -> small boost
+    for i, (name, q, sc, sig) in enumerate(scored):
+        agree = sorted({n for j, (n, r, _, _) in enumerate(scored) if j != i and n != name and quad_iou(q, r) > 0.92})
+        sig["agree_with"] = agree
+        sc = min(1.0, sc + 0.05 * min(2, len(agree)))
         cands.append(Candidate(name, {"quad": (q / s).round(1).tolist()}, round(sc, 3), sig))
 
-    agreement = quad_iou(raw["contour_canny"], raw["contour_threshold"]) if len(raw) == 2 else 0.0
     flat = _looks_flat_scan(small)
-    big = max([c.signals["area"] for c in cands], default=0.0)
-    ff_score = 0.85 if flat > 0.7 else (0.7 if not cands or big > 0.95 else 0.25)
+    best_quad = max((c.score for c in cands if c.signals["area"] < 0.97), default=0.0)
+    # full frame: a scan / already-cropped page, or nothing convincing found
+    ff_score = 0.8 if flat > 0.7 else (0.62 if best_quad < 0.6 else 0.3)
     cands.append(Candidate("full_frame", {"quad": full.round(1).tolist()}, ff_score, {"flat_scan": round(flat, 2)}))
-
-    if len(raw) == 2 and agreement > 0.9:  # fusion: agreeing methods -> average corners, boost
-        fused = (order_quad(raw["contour_canny"]) + order_quad(raw["contour_threshold"])) / 2
-        sc, sig = _score_quad(fused, area_total, grad)
-        sig["agreement"] = round(agreement, 3)
-        cands.append(Candidate("fused", {"quad": (fused / s).round(1).tolist()}, round(min(1.0, sc + 0.15), 3), sig))
 
     chosen = max(cands, key=lambda c: c.score)
     best_other = sorted((c.score for c in cands if c is not chosen), reverse=True)
     margin = chosen.score - (best_other[0] if best_other else 0)
-    if chosen.score >= 0.75 and (chosen.method in ("fused", "full_frame") or margin > 0.15):
+    agreeing = len(chosen.signals.get("agree_with", []))
+    if chosen.score >= 0.75 and (margin > 0.1 or agreeing or chosen.method == "full_frame"):
         tier = "high"
     elif chosen.score >= 0.55:
         tier = "medium"
     else:
         tier = "low"
-    signals = {"agreement": round(agreement, 3), "flat_scan": round(flat, 2), "margin": round(margin, 3)}
+    signals = {"flat_scan": round(flat, 2), "margin": round(margin, 3), "n_candidates": len(cands)}
     return cands, chosen, tier, signals
 
 
