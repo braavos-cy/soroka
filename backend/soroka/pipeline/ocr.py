@@ -175,13 +175,23 @@ def words_to_text(words: list[dict]) -> str:
 
 
 def quick_ocr_score(img: np.ndarray, langs: str) -> dict:
-    """Cheap OCR on a downscaled image, used by the orientation fallback and consistency check."""
+    """Cheap OCR used by the orientation fallback and consistency check.
+
+    Tesseract's layout analysis also reads *sideways* text (it detects vertical lines and rotates them), so a page
+    turned by 90 degrees can read as well as the upright one. Such words come back with boxes taller than wide:
+    the score is multiplied by the share of words read horizontally. Small pages are upscaled (Tesseract wants
+    an x-height of ~20 px), large ones downscaled."""
     h, w = img.shape[:2]
-    s = min(1.0, 1600 / max(h, w))
-    small = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA) if s < 1 else img
+    s = min(2.0, 1600 / max(h, w))
+    small = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC) \
+        if abs(s - 1) > 0.05 else img
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "q.png")
         cv2.imwrite(p, small)
         res = ocr(p, langs, 200, want_pdf=False, psm=3)
+    long_words = [x for x in res["words"] if len(x["text"]) >= 4 and x["conf"] >= 50]
+    vertical = sum(x["box"][3] > x["box"][2] for x in long_words) / len(long_words) if long_words else 0.0
+    base = res["valid_ratio"] * 0.7 + res["mean_conf"] / 100 * 0.3
     return {"mean_conf": res["mean_conf"], "valid_ratio": res["valid_ratio"], "n_words": res["n_words"],
-            "score": round(res["valid_ratio"] * 0.7 + res["mean_conf"] / 100 * 0.3, 3)}
+            "real_words": res["real_words"], "vertical": round(vertical, 2),
+            "score": round(base * (1 - vertical), 3)}

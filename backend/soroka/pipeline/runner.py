@@ -304,7 +304,7 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool) -> None:
     if (result["valid_ratio"] < 0.35 and result["n_words"] >= 15 and not rec["orientation"]["manual"]
             and ori.get("method") != "ocr_4_rotations" and stage_index("orientation") >= run.from_idx):
         base = C.warp(orig, rec["crop"]["quad"])
-        angle, tier, info = _orientation_fallback(base, "rus+eng")
+        angle, tier, info = _orientation_fallback(_normalized(base), "rus+eng")
         if angle != rec["orientation"]["angle"] and info["best_score"] > result["valid_ratio"] + 0.1:
             rec["orientation"]["angle"] = angle
             run.record("orientation", "done", "low", "ocr_4_rotations", angle=angle, reopened=True, **info)
@@ -354,7 +354,14 @@ def _acceptance_with_ocr(db, run: PageRun, result: dict) -> None:
     run.record("acceptance", "done", tier, "heuristic_v2_ocr", **info)
 
 
+def _normalized(img: np.ndarray) -> np.ndarray:
+    """Background-normalized grey page (shadows, low light and colour casts removed) for OSD / quick OCR."""
+    small, _ = C.downscale(img, 2200)
+    return C.gray(C.whiten(small))
+
+
 def _estimate_orientation(img: np.ndarray) -> tuple[int, str, dict]:
+    img = _normalized(img)
     o = O.osd(img)
     ld = C.line_direction(img)
     if o and o["orientation_conf"] >= 1.5:
