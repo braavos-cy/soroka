@@ -509,6 +509,12 @@ def line_direction(img: np.ndarray) -> dict:
     keep = (st[:, 4] >= 10) & (st[:, 3] >= 5) & (st[:, 3] <= 80) & (st[:, 2] >= 2) & (st[:, 2] <= 80)
     keep[0] = False
     pts = cen[keep].astype(np.float32)
+    if keep.sum() >= 30:
+        hc = float(np.median(np.minimum(st[keep, 3], st[keep, 2] * 3)))
+        lh, lv = _line_blob_length(bw, hc), _line_blob_length(np.ascontiguousarray(bw.T), hc)
+        rm = (lh + hc) / (lv + hc)
+    else:
+        rm = 1.0
     if len(pts) < 30:
         r = _profile_direction(downscale(g, 1000)[0])
         return {"horizontal": r > 1.0, "ratio": round(r, 3), "method": "profile"}
@@ -520,8 +526,22 @@ def line_direction(img: np.ndarray) -> dict:
     nn = dist.argmin(1)
     v = np.abs(pts[nn] - pts)
     h = float(np.sum(v[:, 0] > v[:, 1]))
-    r = (h + 1) / (len(v) - h + 1)
-    return {"horizontal": r > 1.0, "ratio": round(r, 3), "method": "nearest_neighbour", "n": int(len(pts))}
+    rn = (h + 1) / (len(v) - h + 1)
+    # two independent votes: nearest neighbours (good when letters are resolved) and line blobs (good when
+    # low resolution merges letters into words); the geometric mean keeps the confident one
+    r = math.sqrt(rn * rm)
+    return {"horizontal": r > 1.0, "ratio": round(r, 3), "nn": round(rn, 3), "blobs": round(rm, 3),
+            "method": "nn+blobs", "n": int(len(pts))}
+
+
+def _line_blob_length(bw: np.ndarray, hc: float) -> float:
+    """Total length of thin, elongated blobs after a horizontal closing that bridges letter/word gaps."""
+    k = max(3, int(hc * 1.5))
+    closed = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (k, 1)))
+    n, _, st, _ = cv2.connectedComponentsWithStats(closed, connectivity=8)
+    w, h = st[1:, 2], st[1:, 3]
+    ok = (w >= 5 * h) & (h <= 2.5 * hc) & (h >= 0.5 * hc)
+    return float(w[ok].sum())
 
 
 # ---------------------------------------------------------------- 7. deskew
