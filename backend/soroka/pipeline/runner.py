@@ -208,7 +208,7 @@ def _process_text_page(db, page: m.Page, run: PageRun) -> None:
     run.record("outputs", "done", "high")
 
 
-def _process_image_page(db, page: m.Page, run: PageRun, forced: bool) -> None:
+def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: list | None = None) -> None:
     rec = run.recipe
     orig = _load_original(page)
 
@@ -220,7 +220,15 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool) -> None:
 
     # 3. boundary candidates (computed before acceptance: boundary success is an acceptance signal)
     boundary_score = 0.5
-    if run.auto("crop"):
+    if rescue:  # another pass: no text inside the chosen page -> maybe the wrong boundary, try the next candidate
+        alt = rescue[0]
+        rec["crop"].update({"quad": alt["quad"], "method": alt["method"]})
+        run.set_auto_value("crop", alt["quad"])
+        prev = run.stages.get("crop", {}).get("info", {})
+        run.record("crop", "done", "low", alt["method"], score=alt["score"], reason="no_text_in_first_choice",
+                   candidates=prev.get("candidates", []))
+        boundary_score = alt["score"]
+    elif run.auto("crop"):
         cands, chosen, tier, sig = C.detect_boundary(orig)
         run.candidates("crop", cands, chosen)
         rec["crop"].update({"quad": chosen.value["quad"], "method": chosen.method})
@@ -326,7 +334,28 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool) -> None:
     # 2b. acceptance, final decision with OCR evidence (§4): the pre-OCR heuristic only sees blobs and colours;
     # a page on which OCR finds no real words is not a document, whatever its shape or colour.
     if run.auto("acceptance") and not forced:
+        if result.get("real_words", 0) <= 2 and run.auto("crop") and stage_index("crop") >= run.from_idx:
+            alts = _rescue_candidates(run, rec["crop"]["quad"]) if rescue is None else rescue[1:]
+            if alts:
+                return _process_image_page(db, page, run, forced, rescue=alts)
         _acceptance_with_ocr(db, run, result)
+
+
+def _rescue_candidates(run: PageRun, chosen_quad: list, limit: int = 2) -> list[dict]:
+    """Before rejecting a page for having no text, the next-best boundary candidates that differ from the chosen
+    one get a chance (a wrong crop, e.g. following a shadow, also yields no text)."""
+    cands = sorted((run.stages.get("crop", {}).get("info", {}) or {}).get("candidates", []),
+                   key=lambda c: -c["score"])
+    out, seen = [], [np.array(chosen_quad, np.float32)]
+    for c in cands:
+        q = np.array(c["quad"], np.float32)
+        if c["score"] < 0.45 or any(C.quad_iou(q, x) > 0.8 for x in seen):
+            continue
+        seen.append(q)
+        out.append(c)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _acceptance_with_ocr(db, run: PageRun, result: dict) -> None:
@@ -340,7 +369,8 @@ def _acceptance_with_ocr(db, run: PageRun, result: dict) -> None:
         val, tier = "document", "high"
     elif n <= 2:
         # text-like structure but nothing readable (very blurry / tiny text): let a human decide
-        if prior >= doc_t and info.get("text_lines", 0) >= 10:
+        # (OCR must have seen many tokens it could not read: brick walls and stripes give none)
+        if prior >= doc_t and info.get("text_lines", 0) >= 10 and result.get("n_words", 0) >= 20:
             val, tier = "uncertain", "low"
         else:
             val, tier = "non_document", "high"
@@ -354,9 +384,9 @@ def _acceptance_with_ocr(db, run: PageRun, result: dict) -> None:
     run.record("acceptance", "done", tier, "heuristic_v2_ocr", **info)
 
 
-def _normalized(img: np.ndarray) -> np.ndarray:
+def _normalized(img: np.ndarray, max_side: int = 2200) -> np.ndarray:
     """Background-normalized grey page (shadows, low light and colour casts removed) for OSD / quick OCR."""
-    small, _ = C.downscale(img, 2200)
+    small, _ = C.downscale(img, max_side)
     return C.gray(C.whiten(small))
 
 

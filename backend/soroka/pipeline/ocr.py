@@ -174,7 +174,7 @@ def words_to_text(words: list[dict]) -> str:
     return "".join(out)
 
 
-def quick_ocr_score(img: np.ndarray, langs: str) -> dict:
+def quick_ocr_score(img: np.ndarray, langs: str, max_side: int = 1600) -> dict:
     """Cheap OCR used by the orientation fallback and consistency check.
 
     Tesseract's layout analysis also reads *sideways* text (it detects vertical lines and rotates them), so a page
@@ -182,7 +182,7 @@ def quick_ocr_score(img: np.ndarray, langs: str) -> dict:
     the score is multiplied by the share of words read horizontally. Small pages are upscaled (Tesseract wants
     an x-height of ~20 px), large ones downscaled."""
     h, w = img.shape[:2]
-    s = min(2.0, 1600 / max(h, w))
+    s = min(2.0, max_side / max(h, w))
     small = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC) \
         if abs(s - 1) > 0.05 else img
     with tempfile.TemporaryDirectory() as d:

@@ -4,6 +4,8 @@ Documents (EN / RU; letter, table, receipt) are rendered as clean pages, then ca
   scan       – flat page, full frame, light noise, tiny skew
   photo      – page on a textured table, roughly straight, uneven light, shadow, blur, JPEG
   angled     – like photo, plus strong perspective (camera at an angle)
+  lowcontrast – angled photo of the page on a light, low-contrast desk
+  cluttered  – angled photo with other objects (books, mug, another sheet) around the page
 and finally rotated 0/90/180/270 (how the phone was held). Non-documents: procedural photos with zero words
 (scenes, table without paper, blank sheet, wall, dark shot, colourful noise).
 
@@ -23,8 +25,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 FONTS = "/usr/share/fonts/truetype"
-SERIF = [f"{FONTS}/dejavu/DejaVuSerif.ttf", f"{FONTS}/liberation/LiberationSerif-Regular.ttf",
-         f"{FONTS}/crosextra/Caladea-Regular.ttf"]
+# Caladea has no Cyrillic glyphs (renders tofu boxes) -> not used
+SERIF = [f"{FONTS}/dejavu/DejaVuSerif.ttf", f"{FONTS}/liberation/LiberationSerif-Regular.ttf"]
 SANS = [f"{FONTS}/dejavu/DejaVuSans.ttf", f"{FONTS}/liberation/LiberationSans-Regular.ttf",
         f"{FONTS}/crosextra/Carlito-Regular.ttf"]
 BOLD = [f"{FONTS}/dejavu/DejaVuSans-Bold.ttf", f"{FONTS}/liberation/LiberationSans-Bold.ttf"]
@@ -176,9 +178,10 @@ def noise_field(h, w, scale, rnd):
     return cv2.resize(g.astype(np.float32), (w, h), interpolation=cv2.INTER_CUBIC).clip(0, 1)
 
 
-def table_texture(h, w, rnd):
-    kind = rnd.choice(["wood", "dark", "fabric", "stone"])
-    base = {"wood": (60, 100, 150), "dark": (40, 40, 45), "fabric": (120, 90, 70), "stone": (150, 150, 145)}[kind]
+def table_texture(h, w, rnd, kind=None):
+    kind = kind or rnd.choice(["wood", "dark", "fabric", "stone"])
+    base = {"wood": (60, 100, 150), "dark": (40, 40, 45), "fabric": (120, 90, 70), "stone": (150, 150, 145),
+            "light": (200, 205, 208)}[kind]
     base = np.array([c + rnd.randint(-20, 20) for c in base], np.float32)
     n = noise_field(h, w, 40, rnd)[..., None]
     img = base * (0.75 + 0.5 * n)
@@ -221,6 +224,21 @@ def nondoc_scene(kind, h, w, rnd):
     elif kind == "dark":
         img = np.ones((h, w, 3), np.float32) * 25 * (0.5 + noise_field(h, w, 80, rnd))[..., None]
         cv2.circle(img, (w // 2, h // 3), 60, (200, 220, 240), -1)
+    elif kind == "bricks":  # regular dark lines: looks like text lines / a table to naive detectors
+        img = np.zeros((h, w, 3), np.float32) + np.array([60, 80, 150], np.float32)
+        img *= (0.8 + 0.4 * noise_field(h, w, 30, rnd))[..., None]
+        bh = rnd.randint(40, 70)
+        for i, y in enumerate(range(0, h, bh)):
+            cv2.line(img, (0, y), (w, y), (190, 190, 185), 6)
+            for x in range((i % 2) * bh, w, bh * 2):
+                cv2.line(img, (x, y), (x, y + bh), (190, 190, 185), 6)
+    elif kind == "stripes":  # striped fabric
+        img = np.zeros((h, w, 3), np.float32)
+        y = np.arange(h)[:, None]
+        img[..., :] = (127 + 100 * np.sign(np.sin(y / rnd.uniform(5, 12))))[..., None]
+        img *= (0.85 + 0.3 * noise_field(h, w, 90, rnd))[..., None]
+        M = cv2.getRotationMatrix2D((w / 2, h / 2), rnd.uniform(-30, 30), 1.2)
+        img = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
     elif kind == "colorful":
         img = np.zeros((h, w, 3), np.float32)
         for c in range(3):
@@ -237,7 +255,9 @@ def nondoc_scene(kind, h, w, rnd):
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
-NONDOC_KINDS = ["landscape", "people", "table", "blank_sheet", "wall", "dark", "colorful", "screenshot_ui"]
+MODES = ["scan", "photo", "angled", "lowcontrast", "cluttered"]
+NONDOC_KINDS = ["landscape", "people", "table", "blank_sheet", "wall", "dark", "colorful", "screenshot_ui", "bricks",
+                "stripes"]
 
 
 # ---------------------------------------------------------------- capture simulation
@@ -249,12 +269,42 @@ def light_gradient(h, w, rnd, strength):
     return g.astype(np.float32)[..., None]
 
 
+HARD = False  # --hard: low light, cast shadows, low resolution, stronger blur and skew, heavier JPEG
+
+
+def cast_shadow(img: np.ndarray, rnd: random.Random) -> np.ndarray:
+    """A hand/phone shadow: a soft dark polygon over part of the frame."""
+    h, w = img.shape[:2]
+    m = np.zeros((h, w), np.float32)
+    x0 = rnd.randint(0, w // 2)
+    pts = np.array([[x0, 0], [x0 + rnd.randint(w // 4, w // 2), 0], [rnd.randint(0, w), h], [0, h]], np.int32)
+    cv2.fillConvexPoly(m, pts, 1.0)
+    m = cv2.GaussianBlur(m, (0, 0), 30)[..., None]
+    return (img.astype(np.float32) * (1 - rnd.uniform(0.3, 0.5) * m)).clip(0, 255).astype(np.uint8)
+
+
 def capture(page: np.ndarray, mode: str, rnd: random.Random) -> tuple[np.ndarray, np.ndarray]:
     """Returns (image, quad of the page in it)."""
+    img, quad = _capture(page, mode, rnd)
+    if HARD and mode != "scan":
+        if rnd.random() < 0.6:
+            img = cast_shadow(img, rnd)
+        if rnd.random() < 0.5:  # low light: dark and noisy
+            img = (img.astype(np.float32) * rnd.uniform(0.45, 0.7) +
+                   np.random.default_rng(rnd.randint(0, 1 << 30)).normal(0, 6, img.shape)).clip(0, 255)
+            img = img.astype(np.uint8)
+        s = rnd.uniform(0.55, 0.75)  # older / cheaper phone, or a messenger-recompressed photo
+        img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+        img = cv2.GaussianBlur(img, (0, 0), rnd.uniform(0.6, 1.2))
+        quad = quad * s
+    return img, quad
+
+
+def _capture(page: np.ndarray, mode: str, rnd: random.Random) -> tuple[np.ndarray, np.ndarray]:
     ph, pw = page.shape[:2]
     src = np.array([[0, 0], [pw - 1, 0], [pw - 1, ph - 1], [0, ph - 1]], np.float32)
     if mode == "scan":
-        ang = rnd.uniform(-1.2, 1.2)
+        ang = rnd.uniform(-4, 4) if HARD else rnd.uniform(-1.2, 1.2)
         M = cv2.getRotationMatrix2D((pw / 2, ph / 2), ang, 1.0)
         img = cv2.warpAffine(page, M, (pw, ph), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
         img = np.clip(img.astype(np.float32) + np.random.default_rng(rnd.randint(0, 1 << 30)).normal(0, 3, img.shape),
@@ -265,7 +315,16 @@ def capture(page: np.ndarray, mode: str, rnd: random.Random) -> tuple[np.ndarray
     H, W = (2400, 1800) if ph >= pw else (1800, 2400)
     if ph / pw > 2:  # receipt: narrower page in a normal frame
         H, W = 2400, 1800
-    bg = table_texture(H, W, rnd)
+    bg = table_texture(H, W, rnd, "light" if mode == "lowcontrast" else None)
+    if mode == "cluttered":  # other objects around the page: books, a phone, a mug, another sheet's corner
+        for _ in range(rnd.randint(4, 8)):
+            col = [rnd.randint(20, 240) for _ in range(3)]
+            x, y = rnd.randint(0, W), rnd.randint(0, H)
+            if rnd.random() < 0.5:
+                cv2.rectangle(bg, (x, y), (x + rnd.randint(150, 700), y + rnd.randint(150, 700)), col, -1)
+            else:
+                cv2.circle(bg, (x, y), rnd.randint(60, 220), col, -1)
+        cv2.fillConvexPoly(bg, np.array([[0, H - 500], [600, H - 380], [520, H], [0, H]], np.int32), (235, 235, 230))
     fill = rnd.uniform(0.55, 0.8)
     s = min(W * fill / pw, H * fill / ph)
     cw, ch = pw * s, ph * s
@@ -274,7 +333,7 @@ def capture(page: np.ndarray, mode: str, rnd: random.Random) -> tuple[np.ndarray
     base = np.array([[-cw / 2, -ch / 2], [cw / 2, -ch / 2], [cw / 2, ch / 2], [-cw / 2, ch / 2]])
     rot = np.array([[math.cos(ang), -math.sin(ang)], [math.sin(ang), math.cos(ang)]])
     dst = base @ rot.T + [cx, cy]
-    if mode == "angled":  # camera tilt: one side shrinks
+    if mode in ("angled", "lowcontrast", "cluttered"):  # camera tilt: one side shrinks
         side = rnd.choice(["top", "bottom", "left", "right"])
         k = rnd.uniform(0.12, 0.22)
         if side in ("top", "bottom"):
@@ -332,20 +391,24 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--hard", action="store_true")
     a = ap.parse_args()
+    global HARD
+    HARD = a.hard
     os.makedirs(a.out, exist_ok=True)
     rnd = random.Random(a.seed)
     manifest = []
     kinds = ["letter", "table", "receipt"]
     for lang in ("en", "ru"):
-        for mode in ("scan", "photo", "angled"):
+        for mi, mode in enumerate(MODES):
             for rot in (0, 90, 180, 270):
-                kind = kinds[(rot // 90 + {"scan": 0, "photo": 1, "angled": 2}[mode]) % 3]
+                kind = kinds[(rot // 90 + mi) % 3]
                 page, words = render_page(kind, lang, rnd)
                 img, quad = capture(page, mode, rnd)
                 img, quad = rotate_with_quad(img, quad, rot)
                 name = f"doc_{lang}_{mode}_{kind}_r{rot}.jpg"
-                open(os.path.join(a.out, name), "wb").write(jpeg(img, 90 if mode == "scan" else 85))
+                q = (90 if mode == "scan" else 85) - (20 if HARD else 0)
+                open(os.path.join(a.out, name), "wb").write(jpeg(img, q))
                 manifest.append({"file": name, "is_document": True, "lang": lang, "mode": mode, "kind": kind,
                                  "rotated_cw": rot, "fix_rotation": (360 - rot) % 360,
                                  "quad": quad.round(1).tolist(), "words": words})
