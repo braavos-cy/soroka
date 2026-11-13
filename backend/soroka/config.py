@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = ""
     alert_email: str = ""
-    pipeline_version: str = "1.0"
+    pipeline_version: str = "1.1"  # 1.1: OCR-based acceptance, new boundary detectors, orientation fixes
     tesseract_threads: int = 2
 
 
