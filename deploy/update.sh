@@ -11,7 +11,11 @@ flock -n 9 || exit 0   # previous deploy still running
 
 git fetch -q origin "$BRANCH"
 target=$(git rev-parse "origin/$BRANCH")
-[ "$target" = "$(cat "$STATE" 2>/dev/null || true)" ] && [ "${1:-}" != "--force" ] && exit 0
+if [ "${1:-}" != "--force" ]; then
+  [ "$target" = "$(cat "$STATE" 2>/dev/null || true)" ] && exit 0
+  # never go backwards (e.g. checkout is ahead of GitHub); use --force to deploy an older commit
+  [ "$target" != "$(git rev-parse HEAD)" ] && git merge-base --is-ancestor "$target" HEAD && exit 0
+fi
 
 echo "deploying $(git log -1 --format='%h %s' "$target")"
 git reset -q --hard "$target"
