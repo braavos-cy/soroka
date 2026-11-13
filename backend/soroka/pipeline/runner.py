@@ -323,6 +323,36 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool) -> None:
         run.record("consistency", "done", tier, "valid_word_ratio", valid_ratio=result["valid_ratio"],
                    n_words=result["n_words"])
 
+    # 2b. acceptance, final decision with OCR evidence (§4): the pre-OCR heuristic only sees blobs and colours;
+    # a page on which OCR finds no real words is not a document, whatever its shape or colour.
+    if run.auto("acceptance") and not forced:
+        _acceptance_with_ocr(db, run, result)
+
+
+def _acceptance_with_ocr(db, run: PageRun, result: dict) -> None:
+    st = run.stages.get("acceptance") or {}
+    info = dict(st.get("info") or {})
+    prior = float(info.get("score", 0.0))
+    doc_t = appsettings.get(db, "accept_doc_threshold")
+    rej_t = appsettings.get(db, "accept_reject_threshold")
+    n = result.get("real_words", O.real_words(result.get("words", [])))
+    if n >= 10:
+        val, tier = "document", "high"
+    elif n <= 2:
+        # text-like structure but nothing readable (very blurry / tiny text): let a human decide
+        if prior >= doc_t and info.get("text_lines", 0) >= 10:
+            val, tier = "uncertain", "low"
+        else:
+            val, tier = "non_document", "high"
+    elif prior >= doc_t:
+        val, tier = "document", "medium"
+    else:
+        val, tier = "uncertain", "low"
+    info.update({"value": val, "real_words": n, "prior_score": prior})
+    run.recipe["acceptance"]["value"] = val
+    run.set_auto_value("acceptance", val)
+    run.record("acceptance", "done", tier, "heuristic_v2_ocr", **info)
+
 
 def _estimate_orientation(img: np.ndarray) -> tuple[int, str, dict]:
     o = O.osd(img)
