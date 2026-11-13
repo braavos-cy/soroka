@@ -222,19 +222,82 @@ def _quads_paper_edges(lab: np.ndarray) -> list[np.ndarray]:
     return out
 
 
-def _quads_paper_threshold(lab: np.ndarray) -> list[np.ndarray]:
-    """Bright, low-chroma, smooth region = paper. Otsu on a paper-likeness map."""
+def _paper_likeness(lab: np.ndarray) -> np.ndarray:
     L = lab[..., 0]
     chroma = np.hypot(lab[..., 1] - 128, lab[..., 2] - 128)
     mu = cv2.blur(L, (15, 15))
     sd = np.sqrt(np.maximum(cv2.blur(L * L, (15, 15)) - mu * mu, 0))
     paper = L - 2.0 * chroma - 3.0 * sd
-    paper = cv2.normalize(paper, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    return cv2.normalize(paper, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+
+def _offset_quad(q: np.ndarray, d: float) -> np.ndarray:
+    """Move every side of a convex quad outwards by d px (undo an erosion)."""
+    c = q.mean(0)
+    lines = []
+    for i in range(4):
+        p0, p1 = q[i], q[(i + 1) % 4]
+        t = p1 - p0
+        n = np.array([t[1], -t[0]]) / (np.linalg.norm(t) + 1e-9)
+        if np.dot(c - p0, n) > 0:
+            n = -n
+        lines.append((p0 + n * d, t))
+    out = []
+    for i in range(4):
+        (a, ta), (b, tb) = lines[i - 1], lines[i]
+        m = np.array([ta, -tb]).T
+        if abs(np.linalg.det(m)) < 1e-6:
+            out.append(q[i])
+            continue
+        u = np.linalg.solve(m, b - a)
+        out.append(a + ta * u[0])
+    return np.array(out, np.float32)
+
+
+def _separated_quads(mask: np.ndarray, min_area: float) -> list[np.ndarray]:
+    """The page often touches another bright object (a second sheet, a white keyboard): erode until they
+    separate, fit the quad, then push its sides back out by the erosion depth."""
+    out = []
+    for k in (9, 21, 35):
+        er = cv2.erode(mask, np.ones((k, k), np.uint8))
+        for q in _contour_quads(er, min_area * 0.7, 1):
+            if _convex(q) and _angles_ok(q) > 0:
+                out.append(order_quad(_offset_quad(q, k / 2)))
+    return out
+
+
+def _quads_paper_threshold(lab: np.ndarray) -> list[np.ndarray]:
+    """Bright, low-chroma, smooth region = paper. Otsu on a paper-likeness map."""
+    paper = _paper_likeness(lab)
     _, th = cv2.threshold(paper, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     k = max(5, lab.shape[1] // 80)
     th = cv2.morphologyEx(th, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
     th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
-    return _contour_quads(th, 0.1 * lab.shape[0] * lab.shape[1], 2)
+    area = 0.1 * lab.shape[0] * lab.shape[1]
+    return _contour_quads(th, area, 2) + _separated_quads(th, area)
+
+
+def _quads_grabcut(small: np.ndarray, lab: np.ndarray) -> list[np.ndarray]:
+    """Colour-model segmentation (GrabCut) seeded by paper-likeness: separates white paper from a light but
+    differently tinted / textured desk where edges are too weak for Canny."""
+    sm, s = downscale(small, 360)
+    pl = cv2.resize(_paper_likeness(lab), (sm.shape[1], sm.shape[0]), interpolation=cv2.INTER_AREA)
+    t, _ = cv2.threshold(pl, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    mask = np.where(pl > t, cv2.GC_PR_FGD, cv2.GC_PR_BGD).astype(np.uint8)
+    b = max(2, int(min(sm.shape[:2]) * 0.015))
+    mask[:b], mask[-b:], mask[:, :b], mask[:, -b:] = cv2.GC_BGD, cv2.GC_BGD, cv2.GC_BGD, cv2.GC_BGD
+    if not (mask == cv2.GC_PR_FGD).any():
+        return []
+    bgd, fgd = np.zeros((1, 65), np.float64), np.zeros((1, 65), np.float64)
+    try:
+        cv2.grabCut(sm, mask, None, bgd, fgd, 4, cv2.GC_INIT_WITH_MASK)
+    except cv2.error:
+        return []
+    fg = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+    fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    area = 0.1 * fg.shape[0] * fg.shape[1]
+    qs = _contour_quads(fg, area, 1) + _separated_quads(fg, area)[:1]
+    return [q / s for q in qs]
 
 
 def _side_samples(q: np.ndarray, i: int, n: int = 40):
@@ -274,7 +337,11 @@ def _boundary_evidence(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tupl
         de = np.linalg.norm(lab[ii[:, 1], ii[:, 0]] - lab[oo[:, 1], oo[:, 0]], axis=1)
         contrast.append(float(np.median(de)))
     edge_s = float(np.mean(sorted(edge)[:3])) if edge else 0.0  # one weak side is tolerated
-    con_s = min(1.0, min(contrast) / 18.0) if contrast else 0.0
+    # one weak side is tolerated (uneven light, a shadow along one edge), as long as the others are clear
+    con = sorted(contrast)
+    con_s = min(1.0, (con[1] if len(con) >= 3 else con[0]) / 18.0) if con else 0.0
+    if len(con) >= 3 and con[0] < 3:  # one side with no contrast at all: probably not a page edge
+        con_s *= 0.6
     return edge_s, con_s, {"edge_sides": [round(e, 2) for e in edge], "contrast": [round(c, 1) for c in contrast],
                            "sides_inside_frame": n_out}
 
@@ -317,7 +384,8 @@ def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, d
     for name, fn in (("contour_canny", lambda: [x for x in [_quad_canny(g)] if x is not None]),
                      ("contour_threshold", lambda: [x for x in [_quad_threshold(g)] if x is not None]),
                      ("paper_edges", lambda: _quads_paper_edges(lab)),
-                     ("paper_region", lambda: _quads_paper_threshold(lab))):
+                     ("paper_region", lambda: _quads_paper_threshold(lab)),
+                     ("grabcut", lambda: _quads_grabcut(small, lab))):
         for q in fn():
             q = order_quad(q)
             if any(quad_iou(q, r) > 0.985 for _, r in raw):  # duplicate
