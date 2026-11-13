@@ -366,15 +366,29 @@ def _estimate_orientation(img: np.ndarray) -> tuple[int, str, dict]:
     langs = "rus+eng"
     if o and o.get("script") == "Latin" and o.get("script_conf", 0) > 1:
         langs = "eng"
-    elif o and o.get("script") == "Cyrillic":
+    elif o and o.get("script") == "Cyrillic" and o.get("script_conf", 0) > 1:
         langs = "rus"
-    angle, tier, info = _orientation_fallback(img, langs)
+    angle, tier, info = _orientation_fallback(img, langs, ld)
     return angle, tier, {"method": "ocr_4_rotations", "osd": o, "line_direction": ld, **info}
 
 
-def _orientation_fallback(img: np.ndarray, langs: str) -> tuple[int, str, dict]:
-    scores = {a: O.quick_ocr_score(C.rotate90(img, a), langs) for a in (0, 90, 180, 270)}
-    ranked = sorted(scores, key=lambda a: scores[a]["score"], reverse=True)
+def _orientation_fallback(img: np.ndarray, langs: str, ld: dict | None = None) -> tuple[int, str, dict]:
+    """OCR the page in each candidate rotation and keep the one that reads best.
+
+    Tesseract's layout analysis reads sideways text almost as well as upright text (0 and 270 can score the
+    same), so it can only tell 0 from 180 (or 90 from 270) reliably. The text-line direction decides the axis
+    when it is clear; ties go to the rotation that makes lines horizontal."""
+    ld = ld or C.line_direction(img)
+    r = ld["ratio"]
+    if r >= 1.6:
+        angles = (0, 180)
+    elif r <= 1 / 1.6:
+        angles = (90, 270)
+    else:
+        angles = (0, 90, 180, 270)
+    scores = {a: O.quick_ocr_score(C.rotate90(img, a), langs) for a in angles}
+    horiz_first = (0, 180) if r >= 1 else (90, 270)
+    ranked = sorted(scores, key=lambda a: (scores[a]["score"], a in horiz_first), reverse=True)
     best, second = ranked[0], ranked[1]
     b, s = scores[best]["score"], scores[second]["score"]
     tier = "medium" if b > 0.3 and b - s > 0.15 else "low"

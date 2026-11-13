@@ -407,7 +407,9 @@ def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, d
     flat = _looks_flat_scan(small)
     best_quad = max((c.score for c in cands if c.signals["area"] < 0.97), default=0.0)
     # full frame: a scan / already-cropped page, or nothing convincing found
-    ff_score = 0.8 if flat > 0.7 else (0.62 if best_quad < 0.6 else 0.3)
+    # (a light desk also has light, uniform borders: a quad with clear contrast on >= 3 sides still wins)
+    clear = max((c.signals["inout_contrast"] for c in cands if c.signals["area"] < 0.97), default=0.0)
+    ff_score = (0.8 if clear < 0.7 else 0.7) if flat > 0.7 else (0.62 if best_quad < 0.6 else 0.3)
     cands.append(Candidate("full_frame", {"quad": full.round(1).tolist()}, ff_score, {"flat_scan": round(flat, 2)}))
 
     chosen = max(cands, key=lambda c: c.score)
@@ -484,17 +486,42 @@ def rotate90(img: np.ndarray, angle_cw: int) -> np.ndarray:
     return img
 
 
-def line_direction(img: np.ndarray) -> dict:
-    """Text lines horizontal vs vertical from projection-profile sharpness (cheap, language independent)."""
-    small, _ = downscale(img, 1000)
-    g = gray(small)
+def _profile_direction(g: np.ndarray) -> float:
     _, bw = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     rows = bw.sum(1).astype(np.float64)
     cols = bw.sum(0).astype(np.float64)
     sh = float(np.sum(np.diff(rows) ** 2)) / max(1, len(rows))
     sv = float(np.sum(np.diff(cols) ** 2)) / max(1, len(cols))
-    ratio = sh / (sv + 1e-9)
-    return {"horizontal": ratio > 1.0, "ratio": round(ratio, 3)}
+    return sh / (sv + 1e-9)
+
+
+def line_direction(img: np.ndarray) -> dict:
+    """Text lines horizontal vs vertical (cheap, language independent).
+
+    Letters of a word are closer to each other than to the letters of the next line, so the direction to each
+    character's nearest neighbour follows the text line. Projection profiles (the old method) were fooled by
+    column layouts (receipts, tables). ratio > 1: horizontal lines."""
+    small, _ = downscale(img, 2000)  # letters must stay separate: at 1000 px they merge into words
+    g = gray(small)
+    bw = cv2.adaptiveThreshold(cv2.GaussianBlur(g, (3, 3), 0), 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                               cv2.THRESH_BINARY_INV, 31, 12)
+    n, _, st, cen = cv2.connectedComponentsWithStats(bw, connectivity=8)
+    keep = (st[:, 4] >= 10) & (st[:, 3] >= 5) & (st[:, 3] <= 80) & (st[:, 2] >= 2) & (st[:, 2] <= 80)
+    keep[0] = False
+    pts = cen[keep].astype(np.float32)
+    if len(pts) < 30:
+        r = _profile_direction(downscale(g, 1000)[0])
+        return {"horizontal": r > 1.0, "ratio": round(r, 3), "method": "profile"}
+    if len(pts) > 2000:
+        pts = pts[np.random.default_rng(0).choice(len(pts), 2000, replace=False)]
+    d = pts[:, None, :] - pts[None, :, :]
+    dist = np.einsum("ijk,ijk->ij", d, d)
+    np.fill_diagonal(dist, np.inf)
+    nn = dist.argmin(1)
+    v = np.abs(pts[nn] - pts)
+    h = float(np.sum(v[:, 0] > v[:, 1]))
+    r = (h + 1) / (len(v) - h + 1)
+    return {"horizontal": r > 1.0, "ratio": round(r, 3), "method": "nearest_neighbour", "n": int(len(pts))}
 
 
 # ---------------------------------------------------------------- 7. deskew
