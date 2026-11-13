@@ -22,7 +22,7 @@ for p in sys.argv[2:]:
     for c in sorted(cands, key=lambda c: -c.score):
         iou = C.quad_iou(np.array(c.value["quad"], np.float32), np.array(gt, np.float32)) if gt else -1
         print(f"   {c.method:<18} {c.score:.3f} iou={iou:.3f}",
-              {k: v for k, v in c.signals.items() if k in ("edge_sides", "contrast", "area", "angles", "agree_with")})
+              {k: v for k, v in c.signals.items() if k in ("edge_sides", "contrast", "sharpness", "area", "agree_with")})
         col = (0, 0, 255) if c is chosen else (255, 0, 0)
         cv2.polylines(vis, [np.array(c.value["quad"], np.int32)], True, col, 6 if c is chosen else 2)
     if gt:

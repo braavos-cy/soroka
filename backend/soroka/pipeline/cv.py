@@ -300,6 +300,78 @@ def _quads_grabcut(small: np.ndarray, lab: np.ndarray) -> list[np.ndarray]:
     return [q / s for q in qs]
 
 
+def _line_intersection(l1, l2):
+    (x1, y1, x2, y2), (x3, y3, x4, y4) = l1, l2
+    d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if abs(d) < 1e-9:
+        return None
+    a, b = x1 * y2 - y1 * x2, x3 * y4 - y3 * x4
+    return np.array([(a * (x3 - x4) - (x1 - x2) * b) / d, (a * (y3 - y4) - (y1 - y2) * b) / d], np.float32)
+
+
+def _merge_segments(segs: np.ndarray, size: float) -> list[tuple]:
+    """Collinear Hough segments -> one line each (theta, rho clusters), weighted by total length."""
+    out = []
+    for x1, y1, x2, y2 in segs:
+        th = math.atan2(y2 - y1, x2 - x1) % math.pi
+        rho = x1 * math.sin(th) - y1 * math.cos(th)
+        ln = math.hypot(x2 - x1, y2 - y1)
+        for c in out:
+            dth = min(abs(th - c["th"]), math.pi - abs(th - c["th"]))
+            if dth < math.radians(4) and abs(abs(rho) - abs(c["rho"])) < size * 0.015:
+                c["len"] += ln
+                c["pts"] += [(x1, y1), (x2, y2)]
+                break
+        else:
+            out.append({"th": th, "rho": rho, "len": ln, "pts": [(x1, y1), (x2, y2)]})
+    lines = []
+    for c in out:
+        pts = np.array(c["pts"], np.float32)
+        vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01).ravel()
+        lines.append(((x0 - vx * 1000, y0 - vy * 1000, x0 + vx * 1000, y0 + vy * 1000), c["len"], c["th"]))
+    return lines
+
+
+def _quads_hough(lab: np.ndarray) -> list[tuple[np.ndarray, float]]:
+    """Page edges are long, straight and sharp; soft shadow edges and text are not. Strong straight lines on the
+    text-free view, two near-horizontal + two near-vertical form a quad."""
+    L = np.clip(lab[..., 0], 0, 255).astype(np.uint8)
+    h, w = L.shape
+    size = float(min(h, w))
+    all_segs = []
+    for lo, hi in ((20, 50), (8, 24)):  # normal and dim / low-contrast photos
+        segs = cv2.HoughLinesP(cv2.Canny(L, lo, hi), 1, np.pi / 360, threshold=int(size * 0.08),
+                               minLineLength=int(size * 0.15), maxLineGap=int(size * 0.03))
+        if segs is not None:
+            all_segs.append(segs.reshape(-1, 4))
+    if not all_segs:
+        return []
+    lines = _merge_segments(np.concatenate(all_segs).astype(np.float64), size)
+    hor = sorted([x for x in lines if min(x[2], math.pi - x[2]) < math.radians(45)], key=lambda x: -x[1])[:5]
+    ver = sorted([x for x in lines if min(x[2], math.pi - x[2]) >= math.radians(45)], key=lambda x: -x[1])[:5]
+    quads = []
+    margin = 0.08 * size
+    for i in range(len(hor)):
+        for j in range(i + 1, len(hor)):
+            for k in range(len(ver)):
+                for m in range(k + 1, len(ver)):
+                    pts = [_line_intersection(a[0], b[0]) for a, b in
+                           ((hor[i], ver[k]), (hor[i], ver[m]), (hor[j], ver[m]), (hor[j], ver[k]))]
+                    if any(p is None for p in pts):
+                        continue
+                    q = np.array(pts, np.float32)
+                    if (q[:, 0] < -margin).any() or (q[:, 1] < -margin).any() or (q[:, 0] > w + margin).any() \
+                            or (q[:, 1] > h + margin).any():
+                        continue
+                    q[:, 0] = q[:, 0].clip(0, w - 1)
+                    q[:, 1] = q[:, 1].clip(0, h - 1)
+                    q = order_quad(q)
+                    if cv2.contourArea(q) < 0.1 * h * w or not _convex(q):
+                        continue
+                    quads.append(q)
+    return quads
+
+
 def _side_samples(q: np.ndarray, i: int, n: int = 40):
     p0, p1 = q[i], q[(i + 1) % 4]
     t = np.linspace(0.1, 0.9, n)[:, None]
@@ -318,7 +390,7 @@ def _boundary_evidence(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tupl
     h, w = lab.shape[:2]
     off = max(4.0, min(h, w) * 0.012)
     gthr = max(6.0, float(np.percentile(grad, 80)))
-    edge, contrast, n_out = [], [], 0
+    edge, contrast, soft, n_out = [], [], [], 0
     for i in range(4):
         pts, nrm = _side_samples(q, i)
         inside = pts + nrm * off
@@ -334,16 +406,22 @@ def _boundary_evidence(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tupl
         n_out += 1
         ii = np.clip(inside.astype(int), 0, [w - 1, h - 1])
         oo = np.clip(outside.astype(int), 0, [w - 1, h - 1])
-        de = np.linalg.norm(lab[ii[:, 1], ii[:, 0]] - lab[oo[:, 1], oo[:, 0]], axis=1)
-        contrast.append(float(np.median(de)))
+        de = float(np.median(np.linalg.norm(lab[ii[:, 1], ii[:, 0]] - lab[oo[:, 1], oo[:, 0]], axis=1)))
+        # sharpness: a paper edge is a step of a few px, a cast shadow a ramp of tens of px. Peak gradient
+        # relative to the colour step across the side; soft sides are not page edges.
+        sharp = float(np.median(g)) / (de + 1.0)
+        soft.append(round(sharp, 3))
+        contrast.append(0.0 if (de > 8 and sharp < 0.19) else de)
     edge_s = float(np.mean(sorted(edge)[:3])) if edge else 0.0  # one weak side is tolerated
     # one weak side is tolerated (uneven light, a shadow along one edge), as long as the others are clear
     con = sorted(contrast)
     con_s = min(1.0, (con[1] if len(con) >= 3 else con[0]) / 18.0) if con else 0.0
+    if len(con) == 1:  # a single side inside the frame is weak evidence (could be a shadow edge)
+        con_s *= 0.6
     if len(con) >= 3 and con[0] < 3:  # one side with no contrast at all: probably not a page edge
         con_s *= 0.6
     return edge_s, con_s, {"edge_sides": [round(e, 2) for e in edge], "contrast": [round(c, 1) for c in contrast],
-                           "sides_inside_frame": n_out}
+                           "sides_inside_frame": n_out, "sharpness": soft}
 
 
 def _score_page_quad(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tuple[float, dict]:
@@ -397,6 +475,10 @@ def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, d
     for name, q in raw:
         sc, sig = _score_page_quad(q, lab, grad)
         scored.append((name, q, sc, sig))
+    hough = sorted(((q, *_score_page_quad(q, lab, grad)) for q in _quads_hough(lab)), key=lambda x: -x[1])
+    for q, sc, sig in hough[:3]:
+        if not any(quad_iou(q, r) > 0.985 for _, r, _, _ in scored):
+            scored.append(("hough_lines", q, sc, sig))
     # agreement between independent detectors -> small boost
     for i, (name, q, sc, sig) in enumerate(scored):
         agree = sorted({n for j, (n, r, _, _) in enumerate(scored) if j != i and n != name and quad_iou(q, r) > 0.92})
