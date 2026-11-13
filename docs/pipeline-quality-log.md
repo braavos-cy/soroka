@@ -85,6 +85,13 @@ test set (EN/RU, 0/90/180/270, scanned / straight photo / angled photo, plus zer
 - **01:40** — The softness rule also discarded a real low-contrast receipt edge on set 1 (step 14). Shadows give
   large steps (37–58), so the rule now needs a step > 20 (`a2039d2`). Set 1 back to all-pass.
 
+- **01:44** — *Negative result:* upscaling small pages to 2000 px before cleanup/OCR (hypothesis: x-height too
+  small for Tesseract) made recall **worse** (hard 0.845 → 0.822, set 1 0.997 → 0.991). Reverted, not committed.
+- **01:48** — *Cleanup A/B* (`eval/ab_cleanup.py`, ground-truth crop + rotation, so only the OCR input differs):
+  current cleanup 0.797 · background division without contrast stretch 0.784 · softer stretch 0.780 ·
+  raw grey 0.505. Background division is essential (+0.29); the stretch is fine. The remaining recall loss on
+  the hard set comes from the source blur / resolution, not from cleanup → left unchanged.
+
 ## Results
 
 Same harness, same images; "before" = commit `7318095`, "after" = `a2039d2`.
@@ -122,8 +129,9 @@ lowcontrast (light desk + shadow + low light) is the weak spot: 6/8 orientation,
 - 2/40 hard-set documents are still rejected: dark, low-contrast, shadowed Russian pages where every boundary
   candidate is wrong and OCR on them is empty. They go to the rejected area (retention), not deleted. A
   "document-like but unreadable → review" signal (text-blob density after a correct crop) would catch them.
-- Low-light + shadow pages: recall 0.55. Next: shadow removal before OCR (the cleanup's background division
-  helps but its kernel is small), and a second OCR pass at a higher upscale for small text.
+- Low-light + shadow pages: recall 0.55. Cleanup variants and upscaling were tested and do not help (see 01:44 and
+  01:48); the next lever is a stronger recognizer for blurry text (phase-2 PaddleOCR evaluation) or a
+  sharpening/deblur step, measured with `eval/ab_cleanup.py`.
 - Non-documents now cost up to two extra pipeline passes (alternative crops): ~2–8 s of CPU per wordless photo.
 - The test set is synthetic. Real photos (curved pages, hands/fingers, glossy glare, multi-page spreads, chat
   screenshots with words — which this pipeline will *keep*, by design of the word rule) must be added:
