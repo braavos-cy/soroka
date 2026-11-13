@@ -8,5 +8,5 @@ connectors/whatsapp-test/auth/
 connectors/whatsapp-test/downloads/
 .deployed-commit
 .deploy.lock
-backend/eval/data/
+backend/eval/data*/
 backend/eval/results/
