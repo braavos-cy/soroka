@@ -6,3 +6,5 @@ __pycache__/
 *.pyc
 connectors/whatsapp-test/auth/
 connectors/whatsapp-test/downloads/
+.deployed-commit
+.deploy.lock

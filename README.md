@@ -3,7 +3,42 @@
 Self-hosted document collection + processing (crop, orientation, deskew, cleanup, OCR) + organization
 and search, with manual correction of every processing step. Spec: [requirements.md](requirements.md).
 
-## Run
+## Development server
+
+```sh
+./dev.sh
+```
+
+Runs everything in the foreground of one terminal (logs from all services, interleaved); **Ctrl+C stops it**.
+Open `http://<server-public-ip>:5173` (port: `DEV_PORT` in `.env`). Code changes apply immediately, no rebuild:
+UI via Vite hot reload, `api` via uvicorn `--reload`, `worker`/`scheduler` restart on `.py` changes, WhatsApp via `node --watch`.
+Restart `./dev.sh` only after changing `requirements.txt`, `package.json` or a Dockerfile.
+
+* First run creates `.env` with random secrets and prints the admin password.
+* Dev is a separate compose project (`soroka-dev`): its own database and files, production volumes are untouched.
+* Plain HTTP (cookies not `Secure`) — dev only, don't put real documents in it.
+* The port must be open in the cloud firewall (Oracle Cloud: VCN → Security List → ingress TCP 5173).
+* Wipe dev data: `docker compose -p soroka-dev down -v`.
+
+## Production (auto-deploy)
+
+Production runs from `/opt/soroka` (separate from any dev checkout) and redeploys itself: a systemd timer checks
+GitHub every minute and, when `main` has a new commit, runs `deploy/update.sh` (`git reset` to `origin/main` +
+`docker compose up -d --build`). The old containers keep serving until the new build is done; a failed build is retried.
+Containers restart automatically (`restart: unless-stopped`, Docker starts on boot).
+
+```sh
+git clone https://github.com/braavos-cy/soroka.git /opt/soroka
+cd /opt/soroka && cp .env.example .env    # change every secret; SITE_ADDRESS=<domain>, HTTP_PORT=80, HTTPS_PORT=443
+deploy/install.sh                         # Docker, auto-deploy timer, daily backup (03:00), log rotation
+```
+
+* Deploy log: `journalctl -u soroka-update -f` · force a redeploy: `/opt/soroka/deploy/update.sh --force`
+* Pause auto-deploy: `sudo systemctl stop soroka-update.timer` (`start` to resume)
+* Ports 80 and 443 must be open in the cloud firewall; Caddy gets and renews the Let's Encrypt certificate itself.
+* Never edit files in `/opt/soroka` (other than `.env`) — they're overwritten on the next deploy.
+
+## Run (manual)
 
 ```sh
 cp .env.example .env        # change every secret!
