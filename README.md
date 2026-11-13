@@ -51,7 +51,7 @@ docker compose --profile security up -d
   the warning — browsers disable password saving/suggestions on pages with certificate errors:
   `docker compose exec web cat /data/caddy/pki/authorities/local/root.crt > caddy-root.crt` then (Windows)
   `certutil -user -addstore Root caddy-root.crt` and restart the browser.
-* API docs (OpenAPI): `/api/docs`
+* API docs (OpenAPI): `/api/docs` — only when `API_DOCS=true` in `.env` (always on in the dev server)
 * First login: `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` → you must set a new password and enrol TOTP.
 
 Services: `db` (Postgres), `redis`, `api` (FastAPI), `worker` ×2 (RQ: queues high > default > low),
