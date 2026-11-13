@@ -411,7 +411,7 @@ def _boundary_evidence(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tupl
         # relative to the colour step across the side; soft sides are not page edges.
         sharp = float(np.median(g)) / (de + 1.0)
         soft.append(round(sharp, 3))
-        contrast.append(0.0 if (de > 8 and sharp < 0.19) else de)
+        contrast.append(0.0 if (de > 20 and sharp < 0.19) else de)
     edge_s = float(np.mean(sorted(edge)[:3])) if edge else 0.0  # one weak side is tolerated
     # one weak side is tolerated (uneven light, a shadow along one edge), as long as the others are clear
     con = sorted(contrast)
