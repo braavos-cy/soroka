@@ -102,7 +102,30 @@ def score_words(words: list[dict]) -> dict:
     tokens = [w for w in words if len(w["text"]) >= 3]
     plausible = [w for w in alpha if w["conf"] >= 70 and not (CYR.search(w["text"]) and LAT.search(w["text"]))]
     valid_ratio = len(plausible) / len(tokens) if tokens else 0.0
-    return {"mean_conf": round(mean_conf, 1), "valid_ratio": round(valid_ratio, 3), "n_words": len(words)}
+    return {"mean_conf": round(mean_conf, 1), "valid_ratio": round(valid_ratio, 3), "n_words": len(words),
+            "real_words": real_words(words)}
+
+
+VOWELS = set("aeiouyAEIOUYаеёиоуыэюяАЕЁИОУЫЭЮЯ")
+WORDLIKE = re.compile(r"^[^\w]*([A-Za-z]+|[А-Яа-яЁё]+)(?:-([A-Za-z]+|[А-Яа-яЁё]+))?[^\w]*$")
+
+
+def real_words(words: list[dict], min_conf: float = 60) -> float:
+    """How many OCR words look like real words: one script, >= 3 letters, a vowel, confident. Numbers with
+    >= 3 digits count half. Texture/photo noise yields short, mixed, vowel-less or low-confidence tokens."""
+    n = 0.0
+    for w in words:
+        t, conf = w["text"], w["conf"]
+        if conf < min_conf:
+            continue
+        m = WORDLIKE.match(t)
+        if m:
+            core = m.group(1) + (m.group(2) or "")
+            if len(core) >= 3 and any(c in VOWELS for c in core) and not (CYR.search(core) and LAT.search(core)):
+                n += 1
+        elif sum(c.isdigit() for c in t) >= 3 and conf >= 70:
+            n += 0.5
+    return n
 
 
 def fix_lookalikes(word: str) -> str:
