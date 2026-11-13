@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str = "admin@example.com"
     bootstrap_admin_password: str = ""
     cookie_secure: bool = True
+    api_docs: bool = False  # serve /api/docs + /api/openapi.json
     session_hours: int = 24 * 7
     reauth_minutes: int = 10
     clamav_host: str = ""  # e.g. "clamav" -> scan uploads via clamd INSTREAM
