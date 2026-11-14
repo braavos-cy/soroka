@@ -553,39 +553,94 @@ def warp(img: np.ndarray, quad: list) -> np.ndarray:
     return cv2.warpPerspective(img, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
 
-def _edge_depths(bad: np.ndarray, maxd: int, bins: int = 24) -> tuple[float, float]:
+def _sharp_end(dist: np.ndarray, end: int, max_soft: int) -> bool:
+    """Does the band end in a step (a page edge: background right next to paper) rather than a ramp (the soft
+    fringe of a shadow)? `dist` is the colour distance to paper for the bin's columns, `end` the first paper row."""
+    prof = np.median(dist[:end + 3], axis=1)
+    level = float(np.median(prof[:max(1, end // 2)]))
+    r = end
+    while r > 0 and prof[r - 1] < 0.8 * level:
+        r -= 1
+    return end - r <= max_soft
+
+
+def _edge_depths(bad: np.ndarray, maxd: int, solid: np.ndarray | None = None, far: int = 0,
+                 bins: int = 24, dist: np.ndarray | None = None, ink: np.ndarray | None = None) -> tuple[float, float]:
     """Background band along the top edge of a warped page (bad = non-paper pixels, text removed):
     per column the depth of the first paper row, robust straight-line fit across the width, depths at both ends.
-    Stops at the first clean row, so an edge band is trimmed but nothing beyond it (no cutting into the page)."""
+    Stops at the first clean row, so an edge band is trimmed but nothing beyond it (no cutting into the page).
+    Bands up to maxd deep are trimmed; deeper ones (up to far) only where the band is solidly unlike paper
+    (`solid`: a dark desk, not a shadow lying on the paper)."""
     h, w = bad.shape
-    band = bad[:maxd + 3]
+    reach = max(maxd, far)
+    band = bad[:reach + 3]
     # a column is clean from row r on when 3 consecutive rows are paper
     ok = ~(band[:-2] | band[1:-1] | band[2:])
-    first = np.where(ok.any(0), ok.argmax(0), maxd).astype(np.float32)
-    first = np.minimum(first, maxd)
+    first = np.where(ok.any(0), ok.argmax(0), reach).astype(np.float32)
+    first = np.minimum(first, reach)
     xs, ds = [], []
     for i in range(bins):
         a, b = i * w // bins, (i + 1) * w // bins
-        med = float(np.median(first[a:b])) if b > a else maxd
-        # no clean paper within reach: a cast shadow or a dark printed area that continues into the page,
-        # not a background band (those end close to the edge) -> no evidence, the line is fitted on the rest
-        if med < maxd:
-            xs.append((a + b) / 2 / w)
-            ds.append(med)
+        if b <= a:
+            continue
+        med = float(np.median(first[a:b]))
+        # no clean paper within maxd: a cast shadow or a dark printed area continuing into the page, not a band
+        # (those end close to the edge) -> no evidence, unless the band is solid background all the way down
+        if med >= maxd and not (solid is not None and med < reach and solid[:int(med), a:b].mean() > 0.85
+                                and (dist is None or _sharp_end(dist[:, a:b], int(med), max(4, h // 80)))
+                                # never trim text away: a desk has none, a page lying in shadow does
+                                and (ink is None or ink[:int(med), a:b].mean() < 0.004)):
+            continue
+        xs.append((a + b) / 2 / w)
+        ds.append(med)
     if len(ds) < bins // 3:
         return 0.0, 0.0
     xs, ds = np.array(xs), np.array(ds)
+    # deep trimming only for a band along (nearly) the whole side, like a desk below the page; a dark cast
+    # shadow over one corner is a wedge present on part of the side only -> keep just the shallow part
+    if (ds >= maxd).any() and (ds > 1).sum() < 0.75 * bins:
+        keep = ds < maxd
+        xs, ds = xs[keep], ds[keep]
+        if len(ds) < bins // 3:
+            return 0.0, 0.0
     if ds.max() < 1:
         return 0.0, 0.0
-    # Theil-Sen line (robust to bins crossing a dark figure or a hand holding the page)
-    slopes = [(ds[j] - ds[i]) / (xs[j] - xs[i]) for i in range(len(xs)) for j in range(i + 1, len(xs))]
-    k = float(np.median(slopes))
-    c = float(np.median(ds - k * xs))
-    clip = lambda v: float(min(maxd, max(0.0, v)))  # noqa: E731
-    return clip(c), clip(c + k)
+
+    def fit(xs, ds):  # Theil-Sen line (robust to bins crossing a dark figure or a hand holding the page)
+        slopes = [(ds[j] - ds[i]) / (xs[j] - xs[i]) for i in range(len(xs)) for j in range(i + 1, len(xs))]
+        k = float(np.median(slopes)) if slopes else 0.0
+        c = float(np.median(ds - k * xs))
+        return c, c + k
+    clip = lambda v: float(min(reach, max(0.0, v)))  # noqa: E731
+    e0, e1 = fit(xs, ds)
+    # a deep band must be deep along the whole side (desk below the page: both ends), not a wedge from one
+    # corner (a cast shadow crossing the side diagonally) -> otherwise only the shallow part counts
+    if max(e0, e1) > maxd and min(e0, e1) < maxd / 2:
+        keep = ds < maxd
+        if keep.sum() < bins // 3:
+            return 0.0, 0.0
+        e0, e1 = fit(xs[keep], ds[keep])
+        return float(min(maxd, max(0.0, e0))), float(min(maxd, max(0.0, e1)))
+    return clip(e0), clip(e1)
 
 
-def refine_quad(img: np.ndarray, quad: list, max_frac: float = 0.08) -> tuple[list, dict]:
+def _cuts_ink(ink: np.ndarray, near: tuple, deep: tuple) -> bool:
+    """Would moving the top edge from the `near` line down to the `deep` line (depths at both ends) remove text?"""
+    w = ink.shape[1]
+    x = np.linspace(0, 1, w)
+    lo = (near[0] + (near[1] - near[0]) * x).astype(int)
+    hi = (deep[0] + (deep[1] - deep[0]) * x).astype(int)
+    rows = np.arange(ink.shape[0])[:, None]
+    region = (rows >= lo[None, :]) & (rows < hi[None, :])
+    return bool(region.any()) and float(ink[region].mean()) > 0.002
+
+
+def _paper_dist(lab: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    d = lab - ref
+    return np.sqrt((0.6 * d[..., 0]) ** 2 + d[..., 1] ** 2 + d[..., 2] ** 2)
+
+
+def refine_quad(img: np.ndarray, quad: list, max_frac: float = 0.08, max_far: float = 0.25) -> tuple[list, dict]:
     """Trim background left inside a detected page quad: along each side, a solid band whose colour differs from the
     paper next to it (table, floor, fingers) is cut off, at most max_frac of the page per side. Text and ruled lines
     are removed first (closing), and trimming stops at the first clean paper row, so the page itself is never cut."""
@@ -599,16 +654,27 @@ def refine_quad(img: np.ndarray, quad: list, max_frac: float = 0.08) -> tuple[li
     small = cv2.warpPerspective(img, M, (W, H), flags=cv2.INTER_AREA, borderMode=cv2.BORDER_CONSTANT,
                                 borderValue=(0, 0, 0))  # outside the photo counts as background
     lab = _paper_view(small)
+    # text strokes: dark detail the closing removed (thin lines darker than the text-free view)
+    ink = (lab[..., 0] - cv2.cvtColor(small, cv2.COLOR_BGR2LAB)[..., 0].astype(np.float32)) > 40
     depths = {}
     for side in range(4):  # top, right, bottom, left: rotate so the side is on top, ends ordered clockwise
         v = np.rot90(lab, side)
         hh, ww = v.shape[:2]
         maxd = max(2, int(max_frac * hh))
+        far = int(max_far * hh)
         # reference paper colour: the band just inside the trimming zone, same side (follows shadows / tints)
-        ref = np.median(v[maxd + 2:maxd + 2 + max(4, hh // 25)].reshape(-1, 3), axis=0)
-        d = v - ref
-        dist = np.sqrt((0.6 * d[..., 0]) ** 2 + d[..., 1] ** 2 + d[..., 2] ** 2)
-        depths[side] = _edge_depths(dist > 16, maxd)
+        sample = lambda at: np.median(v[at + 2:at + 2 + max(4, hh // 25)].reshape(-1, 3), axis=0)  # noqa: E731
+        dist = _paper_dist(v, sample(maxd))
+        d0, d1 = _edge_depths(dist > 16, maxd)
+        # a background band deeper than maxd (e.g. desk below the page): the near sample is still on it, so look
+        # for paper further in; accepted only as a solid, sharp-edged, text-free band along the whole side
+        ref_far = sample(far)
+        if ref_far[0] > sample(maxd)[0] + 5:
+            distf = _paper_dist(v, ref_far)
+            f0, f1 = _edge_depths(distf > 16, maxd, solid=distf > 40, far=far, dist=distf, ink=np.rot90(ink, side))
+            if min(f0, f1) > maxd / 2 and max(f0, f1) > maxd and not _cuts_ink(np.rot90(ink, side), (d0, d1), (f0, f1)):
+                d0, d1 = max(d0, f0), max(d1, f1)
+        depths[side] = (d0, d1)
     # np.rot90 is counter-clockwise: k=1 puts the right edge on top (ends top->bottom), k=2 the bottom edge
     # (right->left), k=3 the left edge (bottom->top)
     t_l, t_r = depths[0]
