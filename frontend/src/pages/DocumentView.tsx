@@ -17,6 +17,8 @@ export default function DocumentView() {
   const { user, reload: reloadStore, toast } = useStore()
   const dlg = useDialog()
   const nav = useNavigate()
+  // back to where the document was opened from (list, folder, search, review); opened by direct link -> the list
+  const goBack = () => ((window.history.state?.idx ?? 0) > 0 ? nav(-1) : nav('/'))
   const [params] = useSearchParams()
   const q = params.get('q') || ''
   const [doc, setDoc] = useState<any>(null)
@@ -61,7 +63,7 @@ export default function DocumentView() {
   return (
     <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', height: '100%' }}>
       <div className="doc-head">
-        <button className="icon" onClick={() => nav(-1)} title={t('back')}><ArrowLeft size={18} /></button>
+        <button className="icon" onClick={goBack} title={t('back')}><ArrowLeft size={18} /></button>
         <input className="title-input" defaultValue={doc.title} key={doc.title} onBlur={(e) => e.target.value !== doc.title && patch({ title: e.target.value })} />
         <TierBadge tier={doc.needs_review ? 'low' : doc.tier} status={doc.status} />
         <FolderSelect value={doc.folder_id} allowEmpty onChange={(f) => patch(f ? { folder_id: f } : { clear_folder: true })} />
@@ -75,9 +77,18 @@ export default function DocumentView() {
           onSelect={(k) => window.open(`/api/documents/${doc.id}/download?kind=${k}`, '_blank')} />
         {doc.status === 'rejected' && <button className="primary" onClick={() => post(`/api/documents/${doc.id}/rescue`)}>{t('rescue')}</button>}
         {!trashed && <button title={t('reprocess')} onClick={() => post(`/api/documents/${doc.id}/reprocess`)}><RefreshCw size={15} /></button>}
-        {!trashed && <button className="danger" title={t('to_trash')} onClick={async () => { await api('/api/documents/bulk', { body: { ids: [doc.id], action: 'trash' } }); reloadStore(); nav(-1) }}><Trash2 size={15} /></button>}
+        {!trashed && <button className="danger" title={t('to_trash')} onClick={() => {
+          // leave at once; the server stops the processing in the background of this page change
+          api('/api/documents/bulk', { body: { ids: [doc.id], action: 'trash' } })
+            .then(() => { reloadStore(); window.dispatchEvent(new Event('soroka:reload')) }).catch((e) => toast(e.detail))
+          goBack()
+        }}><Trash2 size={15} /></button>}
         {trashed && <button onClick={async () => { await api('/api/documents/bulk', { body: { ids: [doc.id], action: 'restore' } }); loadDoc(); reloadStore() }}><ArchiveRestore size={15} /> {t('restore')}</button>}
-        {user.role === 'admin' && (trashed || doc.status === 'rejected') && <button className="danger" onClick={async () => { if (await dlg.confirm({ title: t('purge') + '?', message: t('confirm_purge'), ok: t('purge'), danger: true })) { await api(`/api/documents/${doc.id}`, { method: 'DELETE' }); reloadStore(); nav('/') } }}>{t('purge')}</button>}
+        {user.role === 'admin' && (trashed || doc.status === 'rejected') && <button className="danger" onClick={async () => { if (await dlg.confirm({ title: t('purge') + '?', message: t('confirm_purge'), ok: t('purge'), danger: true })) {
+          api(`/api/documents/${doc.id}`, { method: 'DELETE' })
+            .then(() => { reloadStore(); window.dispatchEvent(new Event('soroka:reload')) }).catch((e) => toast(e.detail))
+          goBack()
+        } }}>{t('purge')}</button>}
       </div>
       <div className="viewer">
         <div className="thumbs">
@@ -136,7 +147,7 @@ function PageCanvas({ page, q, mode, preview, onQuad, onCancelCrop }: { page: an
           {hits.map((w: any, i: number) => <rect key={i} className="hl" x={w.box[0] - 2} y={w.box[1] - 2} width={w.box[2] + 4} height={w.box[3] + 4} rx={3} />)}
         </svg>
       )}
-      {['queued', 'processing'].includes(page.status) && <div style={{ position: 'absolute', top: 8, right: 8 }}><span className="tier proc">{t(page.status)}</span></div>}
+      {['queued', 'processing', 'stopped', 'excluded'].includes(page.status) && <div style={{ position: 'absolute', top: 8, right: 8 }}><span className="tier proc">{t(page.status)}</span></div>}
     </div>
   )
 }

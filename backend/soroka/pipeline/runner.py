@@ -558,7 +558,8 @@ def finalize_document(document_id: int) -> None:
         errors = [p for p in pages if p.status == "error"]
 
         forced = bool(doc.ingest_event and doc.ingest_event.forced)
-        accept = [((p.stages or {}).get("acceptance", {}).get("info", {}) or {}).get("value") for p in pages
+        accept = [("non_document" if _marked_non_document(db, p) else
+                   ((p.stages or {}).get("acceptance", {}).get("info", {}) or {}).get("value")) for p in pages
                   if p.kind == "image"]
         manual_doc = any(normalize(db.get(m.Recipe, p.current_recipe_id).data)["acceptance"]["manual"] and
                          normalize(db.get(m.Recipe, p.current_recipe_id).data)["acceptance"]["value"] == "document"
@@ -604,33 +605,19 @@ def _docs_of_page(db, page_id: int) -> list[m.Document]:
     return [db.get(m.Document, i) for i in ids]
 
 
-def stop_processing(db, doc: m.Document) -> int:
-    """Stop a document's processing: unfinished pages become 'stopped' (no partial result is kept: a page that was
-    being processed starts from its first stage when the document is resumed) and running page jobs are killed.
-    Queued page jobs see the halted document when they start and do nothing. Caller commits."""
+def _cancel_jobs(page_ids: set[int], doc_id: int | None = None) -> None:
+    """Remove waiting jobs for these pages (and the document's split job) from the queues and kill running ones.
+    Killing ends the worker's DB transaction, which releases its lock on the page row."""
     from rq.command import send_stop_job_command
     from rq.job import Job
     from rq.registry import StartedJobRegistry
 
     from ..jobs import queue, redis
-    # serializes with process_document's fan-out (and a concurrent restore) on the document row
-    db.execute(sa_text("SELECT id FROM document WHERE id = :i FOR UPDATE"), {"i": doc.id})
-    page_ids = set()
-    for v in db.query(m.DocumentVersion).filter_by(document_id=doc.id).all():
-        page_ids.update(v.page_ids or [])
-    stopped = 0
-    for pid in page_ids:
-        pg = db.get(m.Page, pid)
-        if pg and pg.status != "ready" and not any(not halted(d) for d in _docs_of_page(db, pid) if d.id != doc.id):
-            pg.status, stopped = "stopped", stopped + 1
-    if doc.status in ("queued", "processing"):
-        doc.status = "stopped"
-    db.flush()
-    db.commit()  # before killing: a job starting from now on sees the halted document
+
     def ours(job) -> bool:
         fn = job.func_name or ""
         return bool(job.args) and ((fn.endswith("process_page_job") and job.args[0] in page_ids)
-                                   or (fn.endswith("process_document") and job.args[0] == doc.id))
+                                   or (doc_id is not None and fn.endswith("process_document") and job.args[0] == doc_id))
 
     for name in ("high", "default", "low"):
         # waiting jobs are removed: left in the queue they would run after a restore, ahead of (and twice with)
@@ -645,14 +632,57 @@ def stop_processing(db, doc: m.Document) -> int:
         reg = StartedJobRegistry(queue=q)
         for job_id in reg.get_job_ids():
             try:
-                job = queue(name).fetch_job(job_id)
-                if job is None:
-                    continue
-                if ours(job):
-                    send_stop_job_command(redis(), job.id)  # registry entries are 'job_id:execution_id' in RQ 2
+                job = q.fetch_job(job_id.split(":")[0])  # registry entries are 'job_id:execution_id' in RQ 2
+                if job is not None and ours(job):
+                    send_stop_job_command(redis(), job.id)
             except Exception:  # noqa: BLE001 - the job may have finished meanwhile
                 log.warning("could not stop job %s", job_id, exc_info=True)
-    return stopped
+
+
+def _pages_in_active_docs(db, exclude_doc: int) -> set[int]:
+    rows = db.execute(sa_text(
+        "SELECT DISTINCT CAST(jsonb_array_elements(v.page_ids) AS int) FROM document d "
+        "JOIN document_version v ON v.id = d.current_version_id "
+        "WHERE d.id <> :d AND d.trashed_at IS NULL AND d.status <> 'rejected'"), {"d": exclude_doc}).all()
+    return {r[0] for r in rows}
+
+
+def stop_processing(db, doc: m.Document) -> int:
+    """Stop a document's processing: unfinished pages become 'stopped' (no partial result is kept: a page that was
+    being processed starts from its first stage when the document is resumed), waiting page jobs are removed and
+    running ones killed. Commits."""
+    page_ids = set()
+    for v in db.query(m.DocumentVersion).filter_by(document_id=doc.id).all():
+        page_ids.update(v.page_ids or [])
+    page_ids -= _pages_in_active_docs(db, doc.id)  # a page shared with a live document keeps going
+    if doc.status in ("queued", "processing"):
+        doc.status = "stopped"
+    db.commit()  # the document is halted from here on: page jobs starting now skip it
+    # kill before touching page rows: a running page job holds its page row locked until it finishes (~15 s)
+    _cancel_jobs(page_ids, doc.id)
+    if not page_ids:
+        return 0
+    # serializes with process_document's fan-out (and a concurrent restore) on the document row
+    db.execute(sa_text("SELECT id FROM document WHERE id = :i FOR UPDATE"), {"i": doc.id})
+    n = db.execute(sa_text("UPDATE page SET status = 'stopped' WHERE id = ANY(:ids) AND status NOT IN "
+                           "('ready', 'excluded')"), {"ids": list(page_ids)}).rowcount
+    db.commit()
+    return n
+
+
+def stop_page(db, page: m.Page) -> None:
+    """A page marked 'not a document' is not processed (further); the result of a finished page is kept."""
+    _cancel_jobs({page.id})
+    db.refresh(page)
+    if page.status != "ready":
+        page.status = "excluded"
+    db.commit()
+
+
+def _marked_non_document(db, page: m.Page) -> bool:
+    rec = db.get(m.Recipe, page.current_recipe_id) if page.current_recipe_id else None
+    acc = normalize(rec.data if rec else {})["acceptance"]
+    return bool(acc.get("manual")) and acc.get("value") == "non_document"
 
 
 def resume_processing(db, doc: m.Document) -> bool:
@@ -728,7 +758,12 @@ def process_page_job(page_id: int, from_stage: str, forced: bool = False) -> Non
                 p.status = "stopped"
                 db.commit()
             return
-        process_page(db, p, from_stage, forced)
+        if _marked_non_document(db, p):  # the user said: not a document -> do not process it
+            if p.status != "ready":
+                p.status = "excluded"
+                db.commit()
+        else:
+            process_page(db, p, from_stage, forced)
         doc_ids = [d.id for d in docs]
     finally:
         db.close()

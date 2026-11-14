@@ -227,6 +227,11 @@ def stop_processing(db: DB, d: m.Document) -> None:
     _stop(db, d)
 
 
+def stop_page_processing(db: DB, pg: m.Page) -> None:
+    from ..pipeline.runner import stop_page
+    stop_page(db, pg)
+
+
 def resume_processing(db: DB, d: m.Document) -> None:
     from ..pipeline.runner import resume_processing as _resume
     _resume(db, d)
@@ -532,15 +537,26 @@ def edit_page(page_id: int, body: EditIn, request: Request, p: Principal = Depen
                                    "info": {k: v for k, v in (st.get("info") or {}).items() if k != "candidates"}},
                            user_id=p.user_id))
     _new_recipe(db, pg, new, p.user_id, f"{'reset' if body.reset else 'edit'}:{body.stage}")
-    pg.status = "queued"
+    unfinished = pg.status != "ready"  # stopped / excluded / never processed: run from the first stage
     pg.reviewed = True
     warnings = []
     if body.stage in ("crop", "orientation") and normalize(new)["deskew"]["manual"]:
         warnings.append("manual_deskew_kept")
+    acc = normalize(new)["acceptance"]
+    if acc["manual"] and acc["value"] == "non_document":
+        # not a document: the page stays in the document, marked, and is not processed (further);
+        # a single-page document goes to Rejected
+        db.commit()
+        _apply_acceptance(db, pg, "non_document", p)
+        stop_page_processing(db, pg)
+        for d in _docs_with_page(db, pg.id):
+            enqueue_finalize(d.id, "default")  # this may have been the last page the document waited for
+        return {"ok": True, "warnings": warnings}
+    pg.status = "queued"
     db.commit()
     if body.stage == "acceptance" and not body.reset:
         _apply_acceptance(db, pg, new["acceptance"]["value"], p)
-    enqueue_page(pg.id, body.stage, "default")
+    enqueue_page(pg.id, "quality" if unfinished else body.stage, "default")
     return {"ok": True, "warnings": warnings}
 
 
@@ -549,14 +565,11 @@ def _apply_acceptance(db: DB, pg: m.Page, value: str, p: Principal) -> None:
         if value == "document" and d.status == "rejected":
             db.query(m.RejectedItem).filter_by(document_id=d.id).delete()
             d.status = "processing"
-        elif value == "non_document":
-            ids = current_page_ids(db, d)
-            if len(ids) == 1:
-                from ..pipeline.runner import _reject
-                _reject(db, d, "marked_non_document")
-                stop_processing(db, d)
-            else:  # drop the page from this document (new version, page kept in history)
-                _new_version(db, d, [i for i in ids if i != pg.id], p.user_id, "remove non-document page")
+        elif value == "non_document" and len(current_page_ids(db, d)) == 1:
+            from ..pipeline.runner import _reject
+            _reject(db, d, "marked_non_document")
+            stop_processing(db, d)
+        # several pages: the page stays (marked, not processed); removing pages comes later
     db.commit()
 
 
