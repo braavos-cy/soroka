@@ -222,6 +222,16 @@ class BulkIn(BaseModel):
     tag_ids: list[int] = []
 
 
+def stop_processing(db: DB, d: m.Document) -> None:
+    from ..pipeline.runner import stop_processing as _stop  # lazy, like _reject: keeps OpenCV out of API startup
+    _stop(db, d)
+
+
+def resume_processing(db: DB, d: m.Document) -> None:
+    from ..pipeline.runner import resume_processing as _resume
+    _resume(db, d)
+
+
 @router.post("/documents/bulk")
 def bulk(body: BulkIn, request: Request, p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
     docs = db.query(m.Document).filter(m.Document.id.in_(body.ids or [-1])).all()
@@ -243,10 +253,15 @@ def bulk(body: BulkIn, request: Request, p: Principal = Depends(ui_user), db: DB
             if d.trashed_at is None:
                 d.trashed_at, d.trashed_by = now(), p.user_id
         audit(db, p, "documents_trashed", ",".join(str(d.id) for d in docs), client_ip(request))
+        for d in docs:  # processing stops in the trash (resumed on restore)
+            stop_processing(db, d)
     elif body.action == "restore":
         for d in docs:
             d.trashed_at = None
         audit(db, p, "documents_restored", ",".join(str(d.id) for d in docs), client_ip(request))
+        db.commit()
+        for d in docs:  # continue where it stopped: finished pages are kept
+            resume_processing(db, d)
     else:
         raise HTTPException(400, "bad_action")
     db.flush()
@@ -275,10 +290,16 @@ def rescue(doc_id: int, request: Request, p: Principal = Depends(ui_user), db: D
         new = apply_edit(rec.data, "acceptance", {"value": "document"})
         _new_recipe(db, pg, new, p.user_id, "rescue")
     d.status = "processing"
+    # finished pages re-run from acceptance (now forced); pages stopped mid-way start from the beginning
+    start = {}
+    for pid in current_page_ids(db, d):
+        pg = db.get(m.Page, pid)
+        start[pid] = "acceptance" if pg.status == "ready" else "quality"
+        pg.status = "queued"  # finalize waits for all of them
     audit(db, p, "document_rescued", d.id, client_ip(request))
     db.commit()
-    for pid in current_page_ids(db, d):
-        enqueue_page(pid, "acceptance", "high")
+    for pid, stage in start.items():
+        enqueue_page(pid, stage, "high")
     return {"ok": True}
 
 
@@ -306,6 +327,7 @@ def purge_document(doc_id: int, request: Request, p: Principal = Depends(admin),
 
 
 def purge(db: DB, d: m.Document) -> None:
+    stop_processing(db, d)  # no job keeps working on pages that are about to disappear
     st = storage()
     page_ids = set()
     for v in db.query(m.DocumentVersion).filter_by(document_id=d.id).all():
@@ -532,6 +554,7 @@ def _apply_acceptance(db: DB, pg: m.Page, value: str, p: Principal) -> None:
             if len(ids) == 1:
                 from ..pipeline.runner import _reject
                 _reject(db, d, "marked_non_document")
+                stop_processing(db, d)
             else:  # drop the page from this document (new version, page kept in history)
                 _new_version(db, d, [i for i in ids if i != pg.id], p.user_id, "remove non-document page")
     db.commit()
