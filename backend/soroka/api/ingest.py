@@ -10,6 +10,7 @@ from ..db import get_db, now
 from ..deps import Principal, audit, client_ip, connector, ingest_principal
 from ..ingest import InFile, IngestMeta, IngestRejected, ingest
 from ..search import index_document
+from . import uploads
 
 router = APIRouter(prefix="/api", tags=["ingest"])
 
@@ -17,10 +18,12 @@ META_FIELDS = set(IngestMeta.__dataclass_fields__)
 
 
 @router.post("/ingest")
-async def ingest_files(request: Request, files: list[UploadFile] = File(...), meta: str = Form("{}"),
+async def ingest_files(request: Request, files: list[UploadFile] | None = File(None), meta: str = Form("{}"),
+                       upload_ids: str = Form("[]"),
                        p: Principal = Depends(ingest_principal), db: DB = Depends(get_db)):
     """Upload one or more files with metadata. Used by the UI, the browser extension and the bots.
-    `meta` is a JSON object; see IngestMeta for fields."""
+    `meta` is a JSON object; see IngestMeta for fields. `upload_ids` (JSON list) names finished resumable upload
+    sessions (/api/uploads) to ingest instead of, or in addition to, attached files."""
     try:
         raw = json.loads(meta or "{}")
     except json.JSONDecodeError:
@@ -38,11 +41,20 @@ async def ingest_files(request: Request, files: list[UploadFile] = File(...), me
         md.forced = False
         if md.priority not in ("high", "low"):
             md.priority = "high"
-    in_files = [InFile(f.filename or "file", await f.read()) for f in files]
+    try:
+        ids = [str(x) for x in json.loads(upload_ids or "[]")]
+    except (json.JSONDecodeError, TypeError):
+        raise HTTPException(400, "bad_upload_ids")
+    in_files = [InFile(f.filename or "file", await f.read()) for f in (files or [])]
+    in_files += [InFile(*uploads.take(u, p)) for u in ids]
+    if not in_files:
+        raise HTTPException(400, "no_files")
     try:
         res = ingest(db, md, in_files, uploaded_by=p.user_id)
     except IngestRejected as e:
         raise HTTPException(409, str(e))
+    for u in ids:
+        uploads.discard(u)
     if p.user:
         audit(db, p, "upload", ",".join(str(d) for d in res["document_ids"]), client_ip(request),
               files=len(in_files))

@@ -1,9 +1,8 @@
 import { useRef, useState } from 'react'
-import { api, Folder, uploadForm } from '../api'
 import { useT } from '../i18n'
-import { useStore } from '../store'
 import { FolderSelect, TagAdder, TagChips } from './Pickers'
 import { Modal } from './Reauth'
+import { NewUpload, useUploads } from './uploads'
 import { UploadCloud, X } from 'lucide-react'
 
 type Item = { file: File; path: string[] } // path = sub-folders (from folder uploads / drag & drop)
@@ -24,15 +23,13 @@ async function readEntry(entry: any, path: string[], out: Item[]): Promise<void>
 
 export default function UploadModal({ folderId, onClose }: { folderId: number | null; onClose: () => void }) {
   const { t } = useT()
-  const { folders, reload, toast } = useStore()
+  const uploads = useUploads()
   const [items, setItems] = useState<Item[]>([])
   const [folder, setFolder] = useState<number | null>(folderId ?? null)
   const [tagIds, setTagIds] = useState<number[]>([])
   const [combine, setCombine] = useState(false)
   const [low, setLow] = useState(false)
   const [over, setOver] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const dirRef = useRef<HTMLInputElement>(null)
 
@@ -53,62 +50,22 @@ export default function UploadModal({ folderId, onClose }: { folderId: number | 
     setItems((x) => [...x, ...out])
   }
 
-  const ensureFolder = async (root: number | null, path: string[], cache: Map<string, number>, known: Folder[]): Promise<number | null> => {
-    let cur = root
-    for (let i = 0; i < path.length; i++) {
-      const key = path.slice(0, i + 1).join('/')
-      if (cache.has(key)) { cur = cache.get(key)!; continue }
-      const existing = known.find((f) => f.parent_id === cur && f.name === path[i])
-      if (existing) cur = existing.id
-      else {
-        const parent = cur
-        const r = await api('/api/folders', { body: { name: path[i], parent_id: parent } })
-        known.push({ id: r.id, parent_id: parent, name: path[i] } as any)
-        cur = r.id
-      }
-      cache.set(key, cur!)
+  // uploads run in the background and show as cards in the document list (pause / resume / cancel there)
+  const submit = () => {
+    const groups = new Map<string, Item[]>()
+    items.forEach((it) => { const k = it.path.join('/'); groups.set(k, [...(groups.get(k) || []), it]) })
+    const list: NewUpload[] = []
+    for (const group of groups.values()) {
+      const base = { path: group[0].path, folder, tagIds, combine, low }
+      if (combine) list.push({ ...base, files: group.map((it) => it.file) })
+      else group.forEach((it) => list.push({ ...base, files: [it.file] }))
     }
-    return cur
-  }
-
-  const submit = async () => {
-    setBusy(true)
-    let docs = 0, dups = 0
-    try {
-      const groups = new Map<string, Item[]>()
-      items.forEach((it) => { const k = it.path.join('/'); groups.set(k, [...(groups.get(k) || []), it]) })
-      const cache = new Map<string, number>()
-      const known = [...folders]
-      let n = 0
-      for (const [k, group] of groups) {
-        const target = await ensureFolder(folder, k ? k.split('/') : [], cache, known)
-        // send in chunks to keep requests reasonable
-        const chunk = combine ? group.length : 20
-        for (let i = 0; i < group.length; i += chunk) {
-          const part = group.slice(i, i + chunk)
-          const fd = new FormData()
-          part.forEach((it) => fd.append('files', it.file, it.file.name))
-          fd.append('meta', JSON.stringify({ platform: 'upload', folder_id: target, tag_ids: tagIds, combine, priority: low ? 'low' : 'high' }))
-          const r = await uploadForm<any>('/api/ingest', fd, (sent, total) => {
-            const mb = (b: number) => (b / 1048576).toFixed(1)
-            const pct = Math.floor((sent / total) * 100)
-            // all bytes sent: the server is storing the files and creating the documents
-            setProgress(sent >= total ? `${t('upload_processing')}` :
-              `${items.length > 1 ? `${n + 1}–${n + part.length} / ${items.length} · ` : ''}${pct}% (${mb(sent)} / ${mb(total)} MB)`)
-          })
-          docs += r.document_ids.length; dups += r.duplicates.length
-          n += part.length
-          setProgress(`${n} / ${items.length}`)
-        }
-      }
-      toast(`${t('uploaded')}: ${docs}${dups ? ` (${t('duplicates')}: ${dups})` : ''}`)
-      reload(); window.dispatchEvent(new Event('soroka:reload'))
-      onClose()
-    } catch (e: any) { toast(e.detail) } finally { setBusy(false) }
+    uploads.add(list)
+    onClose()
   }
 
   return (
-    <Modal onClose={() => !busy && onClose()}>
+    <Modal onClose={onClose}>
       <h2>{t('upload_title')}</h2>
       <div className={'dropzone' + (over ? ' over' : '')} onDragOver={(e) => { e.preventDefault(); setOver(true) }} onDragLeave={() => setOver(false)} onDrop={onDrop}>
         <UploadCloud size={28} className="dz-icon" /><br />
@@ -127,10 +84,9 @@ export default function UploadModal({ folderId, onClose }: { folderId: number | 
         <label className="inline"><input type="checkbox" checked={low} onChange={(e) => setLow(e.target.checked)} />{t('bulk_low_priority')}</label>
       </div>
       <div className="row" style={{ marginTop: 16 }}>
-        {busy && <span className="muted">{t('uploading')} {progress} — {t('upload_keep_open')}</span>}
         <span className="spacer" />
-        <button onClick={onClose} disabled={busy}>{t('cancel')}</button>
-        <button className="primary" onClick={submit} disabled={busy || !items.length}>{t('upload')}</button>
+        <button onClick={onClose}>{t('cancel')}</button>
+        <button className="primary" onClick={submit} disabled={!items.length}>{t('upload')}</button>
       </div>
     </Modal>
   )

@@ -30,32 +30,6 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
   return (ct.includes('json') ? r.json() : r.text()) as Promise<T>
 }
 
-/** POST a form with upload progress (fetch has no upload progress). Same error handling as api(). */
-export function uploadForm<T = any>(path: string, form: FormData, onProgress: (sent: number, total: number) => void,
-                                    noReauth = false): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const x = new XMLHttpRequest()
-    x.open('POST', path)
-    x.withCredentials = true
-    x.setRequestHeader('x-requested-with', 'soroka')
-    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded, e.total) }
-    x.onerror = () => reject(new ApiError(0, 'network_error'))
-    x.onabort = () => reject(new ApiError(0, 'aborted'))
-    x.onload = async () => {
-      let j: any = null
-      try { j = JSON.parse(x.responseText) } catch { /* */ }
-      if (x.status >= 200 && x.status < 300) return resolve(j as T)
-      const detail = j && typeof j.detail === 'string' ? j.detail : (j?.detail ? JSON.stringify(j.detail) : x.statusText)
-      if (x.status === 403 && detail === 'reauth_required' && !noReauth && reauthHandler) {
-        if (await reauthHandler()) return uploadForm<T>(path, form, onProgress, true).then(resolve, reject)
-      }
-      if (x.status === 401 && (detail === 'not_authenticated' || detail === 'mfa_required') && unauthHandler) unauthHandler()
-      reject(new ApiError(x.status, detail))
-    }
-    x.send(form)
-  })
-}
-
 export async function downloadPost(path: string, body: any, filename: string) {
   const r: Response = await api(path, { body, raw: true })
   const blob = await r.blob()

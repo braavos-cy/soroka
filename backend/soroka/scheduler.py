@@ -12,6 +12,7 @@ from pathlib import Path
 from . import appsettings
 from . import models as m
 from .api.documents import purge
+from .api.uploads import cleanup_stale as cleanup_stale_uploads
 from .config import settings
 from .db import SessionLocal, now
 from .ingest import InFile, IngestMeta, ingest
@@ -124,6 +125,8 @@ def main() -> None:
             connector_health(db)
             if time.time() - last_retention > 3600:
                 retention(db)
+                if n := cleanup_stale_uploads():
+                    log.info("removed %d abandoned upload sessions", n)
                 last_retention = time.time()
         except Exception:  # noqa: BLE001
             db.rollback()
