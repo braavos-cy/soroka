@@ -609,9 +609,12 @@ def stop_processing(db, doc: m.Document) -> int:
     being processed starts from its first stage when the document is resumed) and running page jobs are killed.
     Queued page jobs see the halted document when they start and do nothing. Caller commits."""
     from rq.command import send_stop_job_command
+    from rq.job import Job
     from rq.registry import StartedJobRegistry
 
     from ..jobs import queue, redis
+    # serializes with process_document's fan-out (and a concurrent restore) on the document row
+    db.execute(sa_text("SELECT id FROM document WHERE id = :i FOR UPDATE"), {"i": doc.id})
     page_ids = set()
     for v in db.query(m.DocumentVersion).filter_by(document_id=doc.id).all():
         page_ids.update(v.page_ids or [])
@@ -624,16 +627,28 @@ def stop_processing(db, doc: m.Document) -> int:
         doc.status = "stopped"
     db.flush()
     db.commit()  # before killing: a job starting from now on sees the halted document
+    def ours(job) -> bool:
+        fn = job.func_name or ""
+        return bool(job.args) and ((fn.endswith("process_page_job") and job.args[0] in page_ids)
+                                   or (fn.endswith("process_document") and job.args[0] == doc.id))
+
     for name in ("high", "default", "low"):
-        reg = StartedJobRegistry(queue=queue(name))
+        # waiting jobs are removed: left in the queue they would run after a restore, ahead of (and twice with)
+        # the pages the restore queues, starting the document somewhere in the middle
+        q = queue(name)
+        ids = q.get_job_ids()
+        for i in range(0, len(ids), 500):
+            for job in Job.fetch_many(ids[i:i + 500], connection=redis()):
+                if job is not None and ours(job):
+                    q.remove(job.id)
+                    job.delete()
+        reg = StartedJobRegistry(queue=q)
         for job_id in reg.get_job_ids():
             try:
                 job = queue(name).fetch_job(job_id)
                 if job is None:
                     continue
-                fn = job.func_name or ""
-                if ((fn.endswith("process_page_job") and job.args and job.args[0] in page_ids)
-                        or (fn.endswith("process_document") and job.args and job.args[0] == doc.id)):
+                if ours(job):
                     send_stop_job_command(redis(), job.id)  # registry entries are 'job_id:execution_id' in RQ 2
             except Exception:  # noqa: BLE001 - the job may have finished meanwhile
                 log.warning("could not stop job %s", job_id, exc_info=True)
@@ -671,6 +686,11 @@ def process_document(document_id: int) -> None:
                 split_document(db, doc)
             v = db.get(m.DocumentVersion, doc.current_version_id)
             forced = bool(doc.ingest_event and doc.ingest_event.forced)
+            db.execute(sa_text("SELECT id FROM document WHERE id = :i FOR UPDATE"), {"i": doc.id})
+            db.refresh(doc)
+            if halted(doc):  # trashed / rejected while splitting
+                db.commit()
+                return
             todo = [p for p in (db.get(m.Page, pid) for pid in v.page_ids)
                     if p.status != "ready" or p.pipeline_version != settings().pipeline_version]
             # one job per page: every worker (one per core) takes pages, so a long document uses all CPUs;
