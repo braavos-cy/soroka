@@ -326,7 +326,8 @@ input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
   /* document view: one column, page image first, then the pipeline / info panel */
   .doc-head { padding: 8px 10px; gap: 6px; }
   .doc-head .title-input { min-width: 0; }
-  .viewer { display: block; height: auto; }
+  .viewer { display: block; height: auto; min-width: 0; } /* grid item: never as wide as a long thumbnail strip */
+  .viewer > * { min-width: 0; }
   .viewer .stage-area { padding: 8px; overflow: visible; }
   .viewer .side { border-left: none; border-top: 1px solid var(--border); overflow: visible; }
   .imgwrap img { max-height: 72dvh; }
