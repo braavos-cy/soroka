@@ -52,31 +52,54 @@ def encode_image(img: np.ndarray, photo: bool) -> tuple[bytes, str]:
     return buf.tobytes(), "png"
 
 
-def pdf_pages(data: bytes) -> list[dict]:
-    """Per page: has a real text layer? -> pdf_text, else render to an image page (300 dpi)."""
+def _page_has_text(page) -> bool:
+    tp = page.get_textpage()
+    txt = tp.get_text_bounded() or ""
+    tp.close()
+    return sum(ch.isalnum() for ch in txt) >= 30 and text_layer_garbage(txt) < 0.08
+
+
+def _render_scan(page) -> np.ndarray:
+    w, h = page.get_size()
+    scale = 300 / 72
+    if w * h * scale * scale > MAX_PIXELS:
+        scale = (MAX_PIXELS / (w * h)) ** 0.5
+    bmp = page.render(scale=scale)
+    return cv2.cvtColor(np.asarray(bmp.to_pil().convert("RGB")), cv2.COLOR_RGB2BGR)
+
+
+def pdf_page_kinds(data: bytes) -> list[dict]:
+    """Per page: has a real text layer? -> pdf_text, else image (rendered later, per page, by render_pdf_scan).
+    Cheap: nothing is rendered, so a 200-page scan is split in seconds and without holding 200 bitmaps."""
     doc = pdfium.PdfDocument(data)
-    out = []
     try:
+        out = []
         for i in range(len(doc)):
             page = doc[i]
-            tp = page.get_textpage()
-            txt = tp.get_text_bounded() or ""
-            letters = sum(ch.isalnum() for ch in txt)
-            tp.close()
-            w, h = page.get_size()
-            if letters >= 30 and text_layer_garbage(txt) < 0.08:
-                out.append({"kind": "pdf_text", "index": i, "width_pt": w, "height_pt": h})
-            else:
-                scale = 300 / 72
-                if w * h * scale * scale > MAX_PIXELS:
-                    scale = (MAX_PIXELS / (w * h)) ** 0.5
-                bmp = page.render(scale=scale)
-                img = cv2.cvtColor(np.asarray(bmp.to_pil().convert("RGB")), cv2.COLOR_RGB2BGR)
-                out.append({"kind": "image", "index": i, "image": img})
+            out.append({"kind": "pdf_text" if _page_has_text(page) else "image", "index": i})
+            page.close()
+        return out
+    finally:
+        doc.close()
+
+
+def render_pdf_scan(data: bytes, index: int) -> np.ndarray:
+    """One image page of a PDF at 300 dpi (capped at MAX_PIXELS)."""
+    doc = pdfium.PdfDocument(data)
+    try:
+        page = doc[index]
+        try:
+            return _render_scan(page)
+        finally:
             page.close()
     finally:
         doc.close()
-    return out
+
+
+def pdf_pages(data: bytes) -> list[dict]:
+    """Per page: has a real text layer? -> pdf_text, else render to an image page (300 dpi)."""
+    return [dict(pg, image=render_pdf_scan(data, pg["index"])) if pg["kind"] == "image" else pg
+            for pg in pdf_page_kinds(data)]
 
 
 def render_pdf_page(data: bytes, index: int, dpi: int = 150) -> np.ndarray:

@@ -29,7 +29,8 @@ from ..storage import storage
 from . import cv as C
 from . import ocr as O
 from .recipe import STAGES, normalize, stage_index
-from .sources import decode_images, encode_image, office_to_pdf, pdf_page_words, pdf_pages, render_pdf_page
+from .sources import (decode_images, encode_image, office_to_pdf, pdf_page_kinds, pdf_page_words, render_pdf_page,
+                      render_pdf_scan)
 
 log = logging.getLogger("soroka.pipeline")
 TIER_RANK = {"high": 0, "medium": 1, "low": 2}
@@ -99,11 +100,9 @@ def split_document(db, doc: m.Document) -> list[int]:
             if kind == "office":
                 pdf = office_to_pdf(data, fo.filename)
                 fo.rendition_key = storage().put(f"renditions/{fo.id}.pdf", pdf)
-            for pg in pdf_pages(pdf):
-                if pg["kind"] == "pdf_text":
-                    page_ids.append(_new_page(db, fo, pg["index"], "pdf_text", None, False).id)
-                else:
-                    page_ids.append(_new_page(db, fo, pg["index"], "image", pg["image"], False).id)
+            # scanned pages are rendered later by their own page job (in parallel, one bitmap at a time)
+            for pg in pdf_page_kinds(pdf):
+                page_ids.append(_new_page(db, fo, pg["index"], pg["kind"], None, False).id)
     doc.file_type = kinds.pop() if len(kinds) == 1 else "mixed"
     v = m.DocumentVersion(document_id=doc.id, number=1, page_ids=page_ids, note="ingest")
     db.add(v)
@@ -152,6 +151,12 @@ class PageRun:
 
 
 def _load_original(page: m.Page) -> np.ndarray:
+    if page.original_key is None:  # scanned PDF page, not rendered yet: render it now and keep it as the original
+        img = render_pdf_scan(source_pdf_bytes(page.file), page.source_index)
+        data, ext = encode_image(img, False)
+        page.original_key = storage().put(f"pages/{page.id}/original.{ext}", data)
+        page.height, page.width = img.shape[:2]
+        return img
     buf = np.frombuffer(storage().get(page.original_key), np.uint8)
     return cv2.imdecode(buf, cv2.IMREAD_COLOR)
 
