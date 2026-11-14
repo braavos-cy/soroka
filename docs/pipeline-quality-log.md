@@ -182,6 +182,29 @@ Triggered by a real 199-page upload (photos of a thick case file / bound pages o
 - Not done: the phone app's crisper "scan look" (white page / black text) and a second UVDoc pass were tried on
   one page and help visually; not in production.
 
+## 2026-11-15 — flattening: SyntheticDoc replaces UVDoc; crop / flattening choices per page
+
+- Compared on 20 pages of the real 199-page case file (12 hard: book spreads, fingers, rotated, no outline;
+  8 random), each model on the raw photo and on our outline crop; score = words Tesseract (rus) reads with
+  confidence >= 80. Totals: SyntheticDoc high-res + shading (crop) 3399, PaperEdge (raw) 3144, SyntheticDoc
+  without shading 3007, DocScanner 2995, DocTr 2965, UVDoc (crop, the previous default) 2941, DocGeoNet 2825,
+  no flattening 2765. SyntheticDoc + shading was better than UVDoc on 17 of 20 pages, worse on 1; most of its
+  gain comes from the shading correction (divides out the predicted lighting; it cannot add content).
+  DocRes (generalist restoration) was too slow on CPU (~3 min per step) and looked over-processed.
+- SyntheticDoc (MIT, ECCV 2026, same network as UVDoc + a shading decoder): both released checkpoints exported to
+  ONNX at build time (checksums pinned): low 720x512 -> 31x45 map (~1 s/page), high 1440x1024 -> 121x177
+  (~4 s/page). Matches the reference PyTorch output within 0.4/255 after two fixes: the model input is downscaled
+  with PIL bilinear (antialiased, as in training) and the coarse map is upsampled with exact interpolation
+  matrices (cv2.remap quantizes sample positions to 1/32 of a cell -> visible wobble, 5-13/255 error).
+- Automatic choice unchanged in spirit: curved pages (outline crop) -> high-res + shading; flat pages / scans -> none.
+- Editable per page: crop 4 corners | page outline | no crop (the other mode's points are kept); flattening
+  none | low | high, shading on | off, mesh hand-edited (11x8 control points; replaces the model's map, the model
+  still provides shading; choosing a model drops the hand edit). Recipes from the UVDoc version migrate on read.
+- Eval sets: normal set unchanged (39/40, 16/16, crop 39/40, recall 0.973); hard set 38/40 kept (was 37/40),
+  recall 0.838 (was 0.819). E2E with real DB/worker: 39/39 checks; browser: 20/20 (incl. "Original" hold-to-compare).
+- Known: an 11x8 hand-edited mesh cannot carry all the detail of the 121x177 model map (mean 18/255 difference
+  vs the full map on a book page), so editing starts from a smoothed version of the model's flattening.
+
 ## Known gaps / next steps
 
 - 2/40 hard-set documents are still rejected: dark, low-contrast, shadowed Russian pages where every boundary
