@@ -89,7 +89,7 @@ export function TagAdder({ exclude, onAdd, label, icon, noCreate }: { exclude: n
 
 export function TierBadge({ tier, status }: { tier: string | null; status?: string }) {
   const { t } = useT()
-  if (status && ['queued', 'processing', 'stopped'].includes(status)) return <span className="tier proc">{t(status)}</span>
+  if (status && ['queued', 'processing', 'stopped', 'excluded'].includes(status)) return <span className="tier proc">{t(status)}</span>
   if (status === 'error') return <span className="tier low">{t('error')}</span>
   if (status === 'infected') return <span className="tier low">{t('infected')}</span>
   if (!tier) return <span className="tier none">—</span>
