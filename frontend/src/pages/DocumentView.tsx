@@ -5,10 +5,10 @@ import { useT } from '../i18n'
 import { useStore } from '../store'
 import { FolderSelect, fmtBytes, fmtDate, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Menu, Select, useDialog } from '../components/ui'
-import { CROP_COLORS, cropLabel, cropOptions } from '../components/cropOptions'
-import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, History, Maximize, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
+import { CropEditor, MeshEditor } from '../components/PageEditors'
+import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, Grid3x3, History, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
 
-const STAGES = ['quality', 'acceptance', 'crop', 'orientation', 'dewarp', 'deskew', 'cleanup', 'ocr', 'layout', 'consistency', 'outputs']
+const STAGES = ['quality', 'acceptance', 'crop', 'dewarp', 'orientation', 'deskew', 'cleanup', 'ocr', 'layout', 'consistency', 'outputs']
 type Pt = [number, number]
 
 export default function DocumentView() {
@@ -101,7 +101,7 @@ export default function DocumentView() {
           {doc.pages.length === 0 && <div className="muted small">{doc.status_detail || t('not_ready')}</div>}
         </div>
         <div className="stage-area">
-          {page ? <PageCanvas page={page} q={q} mode={mode} preview={preview} onQuad={(quad) => edit('crop', { quad })} onCancelCrop={() => setMode('result')} />
+          {page ? <PageCanvas page={page} q={q} mode={mode} preview={preview} edit={(stage: string, v: any, reset?: boolean) => { edit(stage, v, reset); setMode('result') }} onCancelEdit={() => setMode('result')} />
             : <div className="muted">{doc.pages.length ? t('loading') : (doc.status_detail || t('not_ready'))}</div>}
         </div>
         <div className="side">
@@ -120,7 +120,7 @@ export default function DocumentView() {
 // ---------------------------------------------------------------- canvas: result with search hits / crop editor
 function norm(s: string) { return s.toLowerCase().replace(/ё/g, 'е') }
 
-function PageCanvas({ page, q, mode, preview, onQuad, onCancelCrop }: { page: any; q: string; mode: string; preview: any; onQuad: (q: Pt[]) => void; onCancelCrop: () => void }) {
+function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any; q: string; mode: string; preview: any; edit: (stage: string, v: any, reset?: boolean) => void; onCancelEdit: () => void }) {
   const { t } = useT()
   const [structure, setStructure] = useState<any>(null)
   useEffect(() => {
@@ -136,7 +136,9 @@ function PageCanvas({ page, q, mode, preview, onQuad, onCancelCrop }: { page: an
   }, [structure, q])
 
   if (page.status === 'error') return <div className="card err" style={{ maxWidth: 600 }}><b>{t('page_error')}</b><pre className="small" style={{ whiteSpace: 'pre-wrap' }}>{page.error}</pre></div>
-  if (mode === 'crop' && page.original_url) return <CropEditor page={page} onApply={onQuad} onCancel={onCancelCrop} />
+  if (mode === 'crop' && page.original_url) return <CropEditor page={page} onApply={(v) => edit('crop', v)} onCancel={onCancelEdit} />
+  if (mode === 'mesh' && page.flatten_source_url) return <MeshEditor page={page} onApply={(mesh) => edit('dewarp', { enabled: true, mesh })}
+    onReset={() => edit('dewarp', null, true)} onToggle={(on) => edit('dewarp', { enabled: on })} onCancel={onCancelEdit} />
   if (!page.render_key && !page.rendered && page.status !== 'ready') return <div className="muted">{t('not_ready')}</div>
   const tf = preview ? `rotate(${(preview.rotate || 0) - (preview.deskew || 0)}deg)` : undefined
   return (
@@ -148,64 +150,6 @@ function PageCanvas({ page, q, mode, preview, onQuad, onCancelCrop }: { page: an
         </svg>
       )}
       {['queued', 'processing', 'stopped', 'excluded'].includes(page.status) && <div style={{ position: 'absolute', top: 8, right: 8 }}><span className="tier proc">{t(page.status)}</span></div>}
-    </div>
-  )
-}
-
-function CropEditor({ page, onApply, onCancel }: { page: any; onApply: (q: Pt[]) => void; onCancel: () => void }) {
-  const { t } = useT()
-  const W = page.width, H = page.height
-  const initial: Pt[] = page.recipe.crop.quad || [[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]]
-  const [quad, setQuad] = useState<Pt[]>(initial)
-  const [drag, setDrag] = useState<number | null>(null)
-  const [mag, setMag] = useState<{ x: number; y: number; px: number; py: number } | null>(null)
-  const svgRef = useRef<SVGSVGElement>(null)
-  const opts = cropOptions(page.stages_detail, W, H)
-  const toImg = (e: React.PointerEvent) => {
-    const r = svgRef.current!.getBoundingClientRect()
-    return { x: Math.max(0, Math.min(W - 1, ((e.clientX - r.left) / r.width) * W)), y: Math.max(0, Math.min(H - 1, ((e.clientY - r.top) / r.height) * H)), px: e.clientX - r.left, py: e.clientY - r.top, rw: r.width }
-  }
-  const move = (e: React.PointerEvent) => {
-    if (drag == null) return
-    const p = toImg(e)
-    const nq = quad.map((pt, i) => (i === drag ? [p.x, p.y] : pt)) as Pt[]
-    setQuad(nq); setMag({ x: p.x, y: p.y, px: p.px, py: p.py })
-  }
-  const zoom = 3
-  const scale = svgRef.current ? svgRef.current.getBoundingClientRect().width / W : 1
-  return (
-    <div className="col" style={{ alignItems: 'center' }}>
-      <div className="imgwrap" style={{ touchAction: 'none' }}>
-        <img src={page.original_url} alt="" draggable={false} />
-        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" onPointerMove={move} onPointerUp={() => { setDrag(null); setMag(null) }} onPointerLeave={() => { setDrag(null); setMag(null) }}>
-          {opts.map((o, i) => (
-            <polygon key={o.key} points={o.quad.map((p: Pt) => p.join(',')).join(' ')} fill="none" stroke={CROP_COLORS[i % CROP_COLORS.length]} strokeWidth={2 / scale} strokeDasharray={`${8 / scale} ${6 / scale}`} opacity={0.8} />
-          ))}
-          <polygon points={quad.map((p) => p.join(',')).join(' ')} fill="rgba(47,111,237,.12)" stroke="#2f6fed" strokeWidth={2.5 / scale} />
-          {quad.map((p, i) => (
-            <circle key={i} cx={p[0]} cy={p[1]} r={12 / scale} fill="#fff" stroke="#2f6fed" strokeWidth={3 / scale} style={{ cursor: 'grab' }}
-              onPointerDown={(e) => { (e.target as Element).setPointerCapture(e.pointerId); setDrag(i) }} />
-          ))}
-        </svg>
-        {mag && (
-          <div className="magnifier" style={{
-            left: mag.px + 20, top: mag.py - 160,
-            backgroundImage: `url(${page.original_url})`,
-            backgroundSize: `${W * scale * zoom}px ${H * scale * zoom}px`,
-            backgroundPosition: `${-(mag.x * scale * zoom - 70)}px ${-(mag.y * scale * zoom - 70)}px`,
-          }}><svg viewBox="0 0 140 140" style={{ width: 140, height: 140 }}><path d="M70 55V85M55 70H85" stroke="#dc2626" strokeWidth="1.5" /></svg></div>
-        )}
-      </div>
-      <div className="row">
-        {opts.map((o, i) => (
-          <button key={o.key} onClick={() => setQuad(o.quad)} title={o.method ? t('crop_option_hint') : t('crop_auto_hint')}
-            style={{ borderColor: CROP_COLORS[i % CROP_COLORS.length], borderWidth: 2 }}>{cropLabel(o, t)}</button>
-        ))}
-        <button title={t('full_page')} onClick={() => setQuad([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]])}><Maximize size={15} /></button>
-        <span className="spacer" />
-        <button onClick={onCancel}>{t('cancel')}</button>
-        <button className="primary" onClick={() => onApply(quad)}>{t('apply')}</button>
-      </div>
     </div>
   )
 }
@@ -293,7 +237,8 @@ function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: a
         </div>
       )
     case 'crop':
-      return <div className="row"><button className={mode === 'crop' ? 'active' : ''} onClick={() => setMode(mode === 'crop' ? 'result' : 'crop')}><Crop size={15} /> {t('edit_corners')}</button></div>
+      return <div className="row"><button className={mode === 'crop' ? 'active' : ''} onClick={() => setMode(mode === 'crop' ? 'result' : 'crop')}><Crop size={15} /> {t('edit_crop')}</button>
+        <span className="small muted">{rec.crop.mode === 'mask' ? t('crop_outline') : t('crop_corners')}</span></div>
     case 'orientation':
       return (
         <div className="row">
@@ -304,7 +249,14 @@ function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: a
         </div>
       )
     case 'dewarp':
-      return <div className="small muted">{t('dewarp_phase2')}</div>
+      return (
+        <div className="row">
+          <button className={mode === 'mesh' ? 'active' : ''} onClick={() => setMode(mode === 'mesh' ? 'result' : 'mesh')}><Grid3x3 size={15} /> {t('edit_mesh')}</button>
+          {rec.dewarp.enabled ? <button onClick={() => edit('dewarp', { enabled: false })}>{t('flatten_off')}</button>
+            : <button onClick={() => edit('dewarp', { enabled: true })}>{t('flatten_on')}</button>}
+          <span className="small muted">{rec.dewarp.enabled ? t(rec.dewarp.manual ? 'flatten_state_manual' : 'flatten_state_on') : t('flatten_state_off')}</span>
+        </div>
+      )
     case 'deskew':
       return (
         <div className="col">
