@@ -141,31 +141,36 @@ function drawFlat(canvas: HTMLCanvasElement, img: HTMLImageElement, mesh: Pt[][]
   }
 }
 
-export function MeshEditor({ page, onApply, onReset, onToggle, onCancel }: {
-  page: any; onApply: (mesh: Pt[][]) => void; onReset: () => void; onToggle: (on: boolean) => void; onCancel: () => void
+/** An even grid (no flattening): the starting mesh when no model is chosen. */
+function identityMesh(rows = 11, cols = 8): Pt[][] {
+  return Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => [c / (cols - 1), r / (rows - 1)] as Pt))
+}
+
+export function MeshEditor({ page, onApply, onReset, onCancel }: {
+  page: any; onApply: (mesh: Pt[][]) => void; onReset: () => void; onCancel: () => void
 }) {
   const { t } = useT()
   const dw = page.recipe.dewarp
-  const [mesh, setMesh] = useState<Pt[][] | null>(dw.mesh)
+  const [mesh, setMesh] = useState<Pt[][]>(dw.mesh || identityMesh())
   const [size, setSize] = useState<{ w: number; h: number } | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
-  useEffect(() => setMesh(dw.mesh), [page.recipe_version])
+  useEffect(() => setMesh(dw.mesh || identityMesh()), [page.recipe_version])
   const W = size?.w || 1, H = size?.h || 1
   const d = useDrag(svgRef, W, H)
   const scale = svgRef.current ? svgRef.current.getBoundingClientRect().width / W : 1
   // the preview redraws on every change of the mesh (cheap: ~150 triangles)
   useEffect(() => {
     const c = canvasRef.current, im = imgRef.current
-    if (!c || !im || !size || !mesh) return
+    if (!c || !im || !size) return
     const k = Math.min(1, 900 / size.h)
     c.width = Math.round(size.w * k); c.height = Math.round(size.h * k)
     drawFlat(c, im, mesh)
   }, [mesh, size])
-  const cols = mesh ? mesh[0].length : 0
+  const cols = mesh[0].length
   const move = (e: React.PointerEvent) => {
-    if (d.drag == null || !mesh) return
+    if (d.drag == null) return
     const p = d.toImg(e)
     const r = Math.floor(d.drag / cols), c = d.drag % cols
     setMesh(mesh.map((row, rr) => row.map((q, cc) => (rr === r && cc === c ? [p.x / (W - 1), p.y / (H - 1)] : q)) as Pt[]))
@@ -175,16 +180,12 @@ export function MeshEditor({ page, onApply, onReset, onToggle, onCancel }: {
   if (!page.flatten_source_url) return null
   return (
     <div className="col" style={{ alignItems: 'stretch', width: '100%' }}>
-      <div className="row">
-        <span className="small muted">{dw.enabled ? t('mesh_hint') : t('flatten_off_hint')}</span>
-        <span className="spacer" />
-        {dw.enabled ? <button onClick={() => onToggle(false)}>{t('flatten_off')}</button> : <button className="primary" onClick={() => onToggle(true)}>{t('flatten_on')}</button>}
-      </div>
+      <div className="row"><span className="small muted">{t('mesh_hint')}</span></div>
       <div className="mesh-grid">
         <div className="imgwrap" style={{ touchAction: 'none' }}>
           <img ref={imgRef} src={page.flatten_source_url} alt="" draggable={false}
             onLoad={(e) => setSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })} />
-          {size && mesh && dw.enabled && (
+          {size && (
             <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" onPointerMove={move} onPointerUp={d.end} onPointerLeave={d.end}>
               {mesh.map((row, r) => <polyline key={'r' + r} points={row.map((q) => P(q).join(',')).join(' ')} fill="none" stroke="#2f6fed" strokeWidth={1.5 / scale} />)}
               {mesh[0].map((_, c) => <polyline key={'c' + c} points={mesh.map((row) => P(row[c]).join(',')).join(' ')} fill="none" stroke="#2f6fed" strokeWidth={1.5 / scale} />)}
@@ -197,13 +198,13 @@ export function MeshEditor({ page, onApply, onReset, onToggle, onCancel }: {
           )}
           {size && <Magnifier mag={d.mag} src={page.flatten_source_url} W={W} H={H} scale={scale} />}
         </div>
-        {dw.enabled && mesh && <div className="col" style={{ gap: 4 }}><span className="small muted">{t('preview')}</span><canvas ref={canvasRef} className="mesh-preview" /></div>}
+        {<div className="col" style={{ gap: 4 }}><span className="small muted">{t('preview')}</span><canvas ref={canvasRef} className="mesh-preview" /></div>}
       </div>
       <div className="row">
-        {dw.enabled && <button onClick={onReset}><RotateCcw size={15} /> {t('reset_mesh')}</button>}
+        {dw.mesh_edited && dw.model && <button onClick={onReset}><RotateCcw size={15} /> {t('reset_mesh')}</button>}
         <span className="spacer" />
         <button onClick={onCancel}>{t('cancel')}</button>
-        {dw.enabled && mesh && <button className="primary" onClick={() => onApply(mesh)}>{t('apply')}</button>}
+        <button className="primary" onClick={() => onApply(mesh)}>{t('apply')}</button>
       </div>
     </div>
   )

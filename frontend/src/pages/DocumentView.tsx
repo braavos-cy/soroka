@@ -6,7 +6,7 @@ import { useStore } from '../store'
 import { FolderSelect, fmtBytes, fmtDate, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Menu, Select, useDialog } from '../components/ui'
 import { CropEditor, MeshEditor } from '../components/PageEditors'
-import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, Grid3x3, History, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
+import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, Eye, Grid3x3, History, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
 
 const STAGES = ['quality', 'acceptance', 'crop', 'dewarp', 'orientation', 'deskew', 'cleanup', 'ocr', 'layout', 'consistency', 'outputs']
 type Pt = [number, number]
@@ -123,6 +123,7 @@ function norm(s: string) { return s.toLowerCase().replace(/ё/g, 'е') }
 function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any; q: string; mode: string; preview: any; edit: (stage: string, v: any, reset?: boolean) => void; onCancelEdit: () => void }) {
   const { t } = useT()
   const [structure, setStructure] = useState<any>(null)
+  const [comparing, setComparing] = useState(false)
   useEffect(() => {
     setStructure(null)
     if (q && page.status === 'ready') api(`/api/pages/${page.id}/structure`).then(setStructure).catch(() => {})
@@ -137,19 +138,32 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
 
   if (page.status === 'error') return <div className="card err" style={{ maxWidth: 600 }}><b>{t('page_error')}</b><pre className="small" style={{ whiteSpace: 'pre-wrap' }}>{page.error}</pre></div>
   if (mode === 'crop' && page.original_url) return <CropEditor page={page} onApply={(v) => edit('crop', v)} onCancel={onCancelEdit} />
-  if (mode === 'mesh' && page.flatten_source_url) return <MeshEditor page={page} onApply={(mesh) => edit('dewarp', { enabled: true, mesh })}
-    onReset={() => edit('dewarp', null, true)} onToggle={(on) => edit('dewarp', { enabled: on })} onCancel={onCancelEdit} />
+  if (mode === 'mesh' && page.flatten_source_url) return <MeshEditor page={page} onApply={(mesh) => edit('dewarp', { mesh })}
+    onReset={() => edit('dewarp', { mesh: null })} onCancel={onCancelEdit} />
   if (!page.render_key && !page.rendered && page.status !== 'ready') return <div className="muted">{t('not_ready')}</div>
-  const tf = preview ? `rotate(${(preview.rotate || 0) - (preview.deskew || 0)}deg)` : undefined
+  const tf = preview && !comparing ? `rotate(${(preview.rotate || 0) - (preview.deskew || 0)}deg)` : undefined
+  // hold "Original" to see the unmodified page in place of the result
+  const hold = (on: boolean) => (e: React.PointerEvent) => { e.preventDefault(); setComparing(on) }
   return (
+    <div className="col" style={{ alignItems: 'center', gap: 6 }}>
+      {page.original_url && (
+        <button className={'compare-btn' + (comparing ? ' active' : '')} title={t('compare_hint')}
+          onPointerDown={(e) => { (e.target as Element).setPointerCapture?.(e.pointerId); hold(true)(e) }} onPointerUp={hold(false)}
+          onPointerCancel={hold(false)} onLostPointerCapture={() => setComparing(false)} onContextMenu={(e) => e.preventDefault()}
+          onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setComparing(true) } }}
+          onKeyUp={() => setComparing(false)} onBlur={() => setComparing(false)}>
+          <Eye size={15} /> {t('compare')}
+        </button>
+      )}
     <div className="imgwrap" style={{ transform: tf, transition: 'transform .15s' }}>
-      <img src={page.render_url} alt="" />
-      {structure && hits.length > 0 && (
+      <img src={comparing ? page.original_url : page.render_url} alt="" />
+      {!comparing && structure && hits.length > 0 && (
         <svg viewBox={`0 0 ${structure.width} ${structure.height}`} preserveAspectRatio="none">
           {hits.map((w: any, i: number) => <rect key={i} className="hl" x={w.box[0] - 2} y={w.box[1] - 2} width={w.box[2] + 4} height={w.box[3] + 4} rx={3} />)}
         </svg>
       )}
       {['queued', 'processing', 'stopped', 'excluded'].includes(page.status) && <div style={{ position: 'absolute', top: 8, right: 8 }}><span className="tier proc">{t(page.status)}</span></div>}
+    </div>
     </div>
   )
 }
@@ -236,9 +250,21 @@ function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: a
           <button className={rec.acceptance.value === 'non_document' ? 'active' : ''} onClick={() => edit('acceptance', { value: 'non_document' })}>{t('not_document')}</button>
         </div>
       )
-    case 'crop':
-      return <div className="row"><button className={mode === 'crop' ? 'active' : ''} onClick={() => setMode(mode === 'crop' ? 'result' : 'crop')}><Crop size={15} /> {t('edit_crop')}</button>
-        <span className="small muted">{rec.crop.mode === 'mask' ? t('crop_outline') : t('crop_corners')}</span></div>
+    case 'crop': {
+      const cm = rec.crop.mode === 'none' ? 'none' : rec.crop.mode === 'mask' ? 'mask' : 'quad'
+      const hasOutline = !!rec.crop.polygon
+      return (
+        <div className="col" style={{ gap: 8 }}>
+          <div className="seg wrap">
+            <button className={cm === 'quad' ? 'active' : ''} onClick={() => cm !== 'quad' && edit('crop', { mode: 'quad' })}>{t('crop_corners')}</button>
+            <button className={cm === 'mask' ? 'active' : ''} disabled={!hasOutline} title={hasOutline ? undefined : t('no_outline_hint')}
+              onClick={() => cm !== 'mask' && edit('crop', { mode: 'mask' })}>{t('crop_outline')}</button>
+            <button className={cm === 'none' ? 'active' : ''} onClick={() => cm !== 'none' && edit('crop', { mode: 'none' })}>{t('crop_none')}</button>
+          </div>
+          <div className="row"><button className={mode === 'crop' ? 'active' : ''} onClick={() => setMode(mode === 'crop' ? 'result' : 'crop')}><Crop size={15} /> {t('edit_crop')}</button></div>
+        </div>
+      )
+    }
     case 'orientation':
       return (
         <div className="row">
@@ -248,15 +274,29 @@ function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: a
           <span className="small muted">{angle}°</span>
         </div>
       )
-    case 'dewarp':
+    case 'dewarp': {
+      const dw = rec.dewarp
+      const m = dw.model || 'none'
+      // choosing a model drops a hand-edited mesh (the new model proposes its own)
+      const setModel = (v: string) => edit('dewarp', { model: v === 'none' ? null : v, mesh: null })
       return (
-        <div className="row">
-          <button className={mode === 'mesh' ? 'active' : ''} onClick={() => setMode(mode === 'mesh' ? 'result' : 'mesh')}><Grid3x3 size={15} /> {t('edit_mesh')}</button>
-          {rec.dewarp.enabled ? <button onClick={() => edit('dewarp', { enabled: false })}>{t('flatten_off')}</button>
-            : <button onClick={() => edit('dewarp', { enabled: true })}>{t('flatten_on')}</button>}
-          <span className="small muted">{rec.dewarp.enabled ? t(rec.dewarp.manual ? 'flatten_state_manual' : 'flatten_state_on') : t('flatten_state_off')}</span>
+        <div className="col" style={{ gap: 8 }}>
+          <div className="row"><span className="small muted" style={{ minWidth: 90 }}>{t('flatten_model')}</span>
+            <div className="seg wrap">
+              {['none', 'low', 'high'].map((v) => <button key={v} className={m === v && !(v === 'none' && dw.mesh_edited) ? 'active' : ''} onClick={() => (m !== v || dw.mesh_edited) && setModel(v)}>{t('flatten_' + v)}</button>)}
+            </div></div>
+          <div className="row"><span className="small muted" style={{ minWidth: 90 }} title={t('shading_hint')}>{t('shading')}</span>
+            <div className="seg">
+              <button className={dw.shading ? 'active' : ''} title={t('shading_hint')} onClick={() => !dw.shading && edit('dewarp', { shading: true })}>{t('shading_on')}</button>
+              <button className={!dw.shading ? 'active' : ''} onClick={() => dw.shading && edit('dewarp', { shading: false })}>{t('shading_off')}</button>
+            </div></div>
+          <div className="row">
+            <button className={mode === 'mesh' ? 'active' : ''} onClick={() => setMode(mode === 'mesh' ? 'result' : 'mesh')}><Grid3x3 size={15} /> {t('edit_mesh')}</button>
+            {dw.mesh_edited && <span className="small muted">{t('mesh_state_edited')}</span>}
+          </div>
         </div>
       )
+    }
     case 'deskew':
       return (
         <div className="col">
