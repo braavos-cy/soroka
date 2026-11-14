@@ -17,3 +17,4 @@ pillow==11.3.0
 pillow-heif==0.22.0
 pypdfium2==4.30.0
 pikepdf==9.4.2
+onnxruntime==1.20.1

@@ -21,6 +21,10 @@ linked libraries, on our own server (no redistribution), which those licenses pe
 | pypdfium2 / PDFium | PDF render + text layer | Apache-2.0 / BSD-3 |
 | pikepdf / qpdf | PDF assembly | MPL-2.0 / Apache-2.0 |
 | Tesseract 5 | OCR + OSD | Apache-2.0 |
+| MobileSAM (code + weights `mobile_sam.pt`, commit f706ad9) | page outline (mask) on photos | Apache-2.0 |
+| UVDoc (code + weights `best_model.pkl`, commit 4c9b82b) | page flattening mesh | MIT |
+| ONNX Runtime 1.20 | runs the two models above (exported to ONNX at image build) | MIT |
+| PyTorch, torchvision, timm, onnx (build stage only, not in the final image) | model export | BSD-3 / BSD-3 / Apache-2.0 / Apache-2.0 |
 | tessdata_best `rus`, `eng`; tessdata `osd` (model weights) | OCR models | Apache-2.0 |
 | LibreOffice (headless) | office → PDF | ⚠ MPL-2.0 (separate program) |
 | ClamAV (optional) | malware scan | ⚠ GPL-2.0 (separate container, talked to over a socket) |
@@ -32,5 +36,5 @@ linked libraries, on our own server (no redistribution), which those licenses pe
 | pino | connector logging | MIT |
 
 Phase-2 candidates (to verify before use): PaddleOCR / PP-LCNet / PP-Structure (Apache-2.0),
-UVDoc (MIT — verify weights), DocRes (check repo/weights license), fastText LID (MIT code, CC-BY-SA-3.0 weights ⚠),
+DocRes (check repo/weights license), fastText LID (MIT code, CC-BY-SA-3.0 weights ⚠),
 Lingua (Apache-2.0), py_webauthn (BSD-3).
