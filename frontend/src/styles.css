@@ -278,3 +278,65 @@ input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
 .up-actions button { padding: 2px 6px; }
 .upload-row .progress { margin-top: 4px; max-width: 260px; }
 .danger-text { color: var(--bad); }
+
+/* ---------------------------------------------------------------- narrow screens / phones
+   Everything below only applies under 900px (folder drawer) and under 640px (phone layout); desktop is unchanged. */
+.drawer-toggle { display: none !important; }
+.drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 150; }
+.drawer { position: absolute; top: 0; left: 0; bottom: 0; width: min(300px, 86vw); background: var(--panel); overflow: auto; box-shadow: var(--shadow); display: flex; }
+.drawer .sidebar { border-right: none; }
+@media (max-width: 900px) {
+  .drawer-toggle { display: inline-flex !important; }
+}
+@media (hover: none) {
+  /* no hover on touch screens: folder actions always visible */
+  .tree-item .acts { visibility: visible; position: static; background: none; padding-left: 0; }
+  .tree-item .cnt { display: none; }
+}
+@media (max-width: 640px) {
+  html, body { overflow-x: hidden; }
+  .app { height: 100dvh; }
+  input, select, textarea { font-size: 16px; } /* iOS zooms into smaller inputs */
+  /* top bar: menu, logo icon, search; the sections move to a bottom tab bar */
+  .topbar { gap: 6px; padding: 0 8px; }
+  .topbar .logo-txt { display: none; }
+  .topbar .search { min-width: 0; max-width: none; }
+  .topbar .search input { padding-top: 6px; padding-bottom: 6px; }
+  .topbar nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; justify-content: space-around;
+    background: var(--panel); border-top: 1px solid var(--border); padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); }
+  .topbar nav a { flex: 1; justify-content: center; padding: 10px 0; }
+  .topbar nav a .badge { top: 4px; right: auto; left: calc(50% + 4px); transform: none; }
+  .topbar > .spacer { display: none; }
+  .content { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
+  .toast { bottom: calc(72px + env(safe-area-inset-bottom)); max-width: calc(100vw - 24px); }
+  /* lists */
+  .toolbar { padding: 8px 10px; gap: 6px; min-height: 0; }
+  .toolbar h2 { font-size: 16px; }
+  .filters { padding: 8px 10px; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 10px; }
+  .doc-card .thumb { height: 150px; }
+  .doc-card .chk { width: 22px; height: 22px; }
+  /* list view: checkbox, title, status (folder, tags, source and date are in the document) */
+  .docs-list th:nth-child(n+3):nth-child(-n+6), .docs-list tr:not(.upload-row) > td:nth-child(n+3):nth-child(-n+6),
+  .docs-list tr.upload-row > td:nth-child(3) { display: none; }
+  .docs-list td.title-cell { width: 100%; }
+  .page-pad { padding: 12px; }
+  .page-pad .list { display: block; overflow-x: auto; }
+  .results { min-height: 0; }
+  /* document view: one column, page image first, then the pipeline / info panel */
+  .doc-head { padding: 8px 10px; gap: 6px; }
+  .doc-head .title-input { min-width: 0; }
+  .viewer { display: block; height: auto; }
+  .viewer .stage-area { padding: 8px; overflow: visible; }
+  .viewer .side { border-left: none; border-top: 1px solid var(--border); overflow: visible; }
+  .imgwrap img { max-height: 72dvh; }
+  /* dialogs as bottom sheets */
+  .modal-bg { padding: 0; align-items: flex-end; }
+  .modal, .modal.small, .modal.wide { width: 100%; max-height: 92dvh; border-radius: 12px 12px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .dropzone { padding: 18px 12px; }
+  .dd-pop { max-width: calc(100vw - 16px); }
+  .review-grid { padding: 10px; gap: 10px; }
+  .review-list .item { grid-template-columns: 64px 1fr; }
+  .review-list img { width: 64px; }
+  .account-head h1 { font-size: 18px; }
+}

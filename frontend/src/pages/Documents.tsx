@@ -300,7 +300,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           ))}
         </div>
       ) : (
-        <table className="list">
+        <table className="list docs-list">
           <thead><tr><th style={{ width: 30 }}><input type="checkbox" checked={sel.size === items.length && items.length > 0} onChange={(e) => setSel(e.target.checked ? new Set(items.map((d) => d.id)) : new Set())} /></th>
             <th>{t('title')}</th><th>{t('folder')}</th><th>{t('tags')}</th><th>{t('source')}</th><th>{t('received')}</th><th>{t('status')}</th></tr></thead>
           <tbody>
