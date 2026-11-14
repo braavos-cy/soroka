@@ -33,7 +33,9 @@ async def ingest_files(request: Request, files: list[UploadFile] = File(...), me
         # users may not impersonate bot sources; extension uses platform=email
         if md.platform not in ("upload", "email", "import"):
             md.platform = "upload"
-        md.forced = md.platform in ("upload", "email") or md.forced  # explicit user action = keep
+        # §4.3: only bot mentions, private forwards and rescue force-save; uploads are classified like any
+        # other item (a photo of a wall goes to Rejected, from where any user can rescue it)
+        md.forced = False
         if md.priority not in ("high", "low"):
             md.priority = "high"
     in_files = [InFile(f.filename or "file", await f.read()) for f in files]
