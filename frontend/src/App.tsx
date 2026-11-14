@@ -12,6 +12,7 @@ import AdminPage from './pages/Admin'
 import AccountPage from './pages/Account'
 import { ReauthModal } from './components/Reauth'
 import { DialogProvider } from './components/ui'
+import { UploadsProvider } from './components/uploads'
 import { PanelLeftClose, PanelLeftOpen, Bird, CircleUser, ListChecks, LogOut, Search, Settings, ShieldX, Trash2 } from 'lucide-react'
 
 export default function App() {
@@ -36,7 +37,7 @@ export default function App() {
   if (me === null) body = <div className="login-wrap muted">{ctx.t('loading')}</div>
   else if (!me.user) body = <Login step={me.next} onDone={load} />
   else if (me.user.must_change_password) body = <ChangePassword forced email={me.user.email} onDone={load} />
-  else body = <StoreProvider user={me.user}><Shell onLogout={() => setMe({ user: null, next: 'login' })} /></StoreProvider>
+  else body = <StoreProvider user={me.user}><UploadsProvider><Shell onLogout={() => setMe({ user: null, next: 'login' })} /></UploadsProvider></StoreProvider>
   return <LangCtx.Provider value={ctx}><DialogProvider>{body}<ReauthModal /></DialogProvider></LangCtx.Provider>
 }
 

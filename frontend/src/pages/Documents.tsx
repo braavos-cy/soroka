@@ -6,9 +6,10 @@ import { folderPath, useStore } from '../store'
 import { DND } from '../components/Sidebar'
 import { setMultiDragImage } from '../components/dragGhost'
 import UploadModal from '../components/Upload'
+import { fmtMB, UpTask, useUploads } from '../components/uploads'
 import { FileName, FolderMenu, fmtDate, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Select, useDialog } from '../components/ui'
-import { ArchiveRestore, Files, Download, LayoutGrid, List, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
+import { ArchiveRestore, Files, Download, LayoutGrid, List, Pause, Play, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
 
 const PAGE = 60
 
@@ -18,6 +19,65 @@ function pagesLabel(n: number, lang: string): string {
   const m10 = n % 10, m100 = n % 100
   const w = m10 === 1 && m100 !== 11 ? 'страница' : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 'страницы' : 'страниц'
   return `${n} ${w}`
+}
+
+type UpProps = { task: UpTask; selected: boolean; onToggle: () => void; onPause: () => void; onResume: () => void; onCancel: () => void }
+
+const upPct = (u: UpTask) => (u.size ? Math.floor((u.sent / u.size) * 100) : 100)
+const canPause = (u: UpTask) => u.state === 'queued' || u.state === 'uploading'
+const canResume = (u: UpTask) => u.state === 'paused' || u.state === 'error'
+
+function UpButtons({ task, onPause, onResume, onCancel }: Omit<UpProps, 'selected' | 'onToggle'>) {
+  const { t } = useT()
+  const stop = (f: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); f() }
+  return <>
+    {canPause(task) && <button title={t('up_pause')} onClick={stop(onPause)}><Pause size={14} /></button>}
+    {canResume(task) && <button title={t('up_resume')} onClick={stop(onResume)}><Play size={14} /></button>}
+    {task.state !== 'saving' && <button className="danger" title={t('up_cancel')} onClick={stop(onCancel)}><X size={14} /></button>}
+  </>
+}
+
+function upStatus(u: UpTask, t: (k: string) => string): string {
+  if (u.state === 'error') return `${t('up_error')}: ${u.error || ''}`
+  return t('up_' + u.state)
+}
+
+/** An upload in progress, shown as a card until the server has created the document. */
+function UploadCard(p: UpProps) {
+  const { t } = useT()
+  const u = p.task, pct = upPct(u)
+  return (
+    <div data-upload-id={u.id} className={'doc-card upload-card' + (p.selected ? ' sel' : '') + ' up-' + u.state} onClick={p.onToggle}>
+      <input type="checkbox" className="chk" checked={p.selected} onClick={(e) => e.stopPropagation()} onChange={p.onToggle} />
+      <div className="thumb up-thumb">
+        {u.state === 'paused' ? <Pause size={28} /> : <UploadIcon size={28} />}
+        <div className="up-pct">{u.state === 'saving' ? t('up_saving') : `${pct}%`}</div>
+        <div className="progress"><div style={{ width: `${pct}%` }} /></div>
+        <div className="small muted">{fmtMB(u.sent)} / {fmtMB(u.size)} MB</div>
+      </div>
+      <div className="body">
+        <div className="card-title"><FileName name={u.name} className="t" /></div>
+        <div className="row up-actions">
+          <span className={'small ' + (u.state === 'error' ? 'danger-text' : 'muted')} title={upStatus(u, t)}>{upStatus(u, t)}</span>
+          <span className="spacer" /><UpButtons {...p} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function UploadRow(p: UpProps) {
+  const { t } = useT()
+  const u = p.task, pct = upPct(u)
+  return (
+    <tr data-upload-id={u.id} className={'upload-row up-' + u.state + (p.selected ? ' sel' : '')} onClick={p.onToggle}>
+      <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={p.selected} onChange={p.onToggle} /></td>
+      <td className="title-cell"><FileName name={u.name} /><div className="progress"><div style={{ width: `${pct}%` }} /></div></td>
+      <td colSpan={3} className="small muted">{fmtMB(u.sent)} / {fmtMB(u.size)} MB · {pct}%</td>
+      <td className="small">{upStatus(u, t)}</td>
+      <td className="up-actions"><UpButtons {...p} /></td>
+    </tr>
+  )
 }
 
 export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 'trash' }) {
@@ -30,6 +90,8 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [sel, setSel] = useState<Set<number>>(new Set())
+  const [upSel, setUpSel] = useState<Set<string>>(new Set())
+  const uploads = useUploads()
   const [upload, setUpload] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
   const [layout, setLayout] = useState<'grid' | 'list'>(() => { try { return (localStorage.getItem('layout') as any) || 'grid' } catch { return 'grid' } })
@@ -52,7 +114,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     api(`/api/documents?${query()}`).then((r) => { setItems(r.items); setTotal(r.total) }).catch((e) => toast(e.detail)).finally(() => setLoading(false))
   }, [query])
   useEffect(() => { load() }, [load])
-  useEffect(() => { setSel(new Set()); setLimit(PAGE) }, [params, view])
+  useEffect(() => { setSel(new Set()); setUpSel(new Set()); setLimit(PAGE) }, [params, view])
   useEffect(() => {
     const h = () => load()
     window.addEventListener('soroka:reload', h)
@@ -68,12 +130,13 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const [band, setBand] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const startBand = (e: React.MouseEvent) => {
     if (e.button !== 0 || !area.current) return
-    if ((e.target as HTMLElement).closest('[data-doc-id], button, input, a, thead, .dd-pop')) return
+    if ((e.target as HTMLElement).closest('[data-doc-id], [data-upload-id], button, input, a, thead, .dd-pop')) return
     const wrap = area.current
     const r0 = wrap.getBoundingClientRect()
     const sx = e.clientX - r0.left, sy = e.clientY - r0.top
     const additive = e.ctrlKey || e.metaKey || e.shiftKey
     const base = additive ? new Set(sel) : new Set<number>()
+    const upBase = additive ? new Set(upSel) : new Set<string>()
     const scroller = wrap.closest('.content') as HTMLElement | null
     let moved = false
     e.preventDefault()
@@ -91,6 +154,13 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
         if (bx < x + w && bx + b.width > x && by < y + h && by + b.height > y) next.add(Number(el.dataset.docId))
       })
       setSel(next)
+      const upNext = new Set(upBase)
+      wrap.querySelectorAll<HTMLElement>('[data-upload-id]').forEach((el) => {
+        const b = el.getBoundingClientRect()
+        const bx = b.left - r.left, by = b.top - r.top
+        if (bx < x + w && bx + b.width > x && by < y + h && by + b.height > y) upNext.add(el.dataset.uploadId!)
+      })
+      setUpSel(upNext)
       if (scroller) {  // auto-scroll near the edges
         const sr = scroller.getBoundingClientRect()
         if (ev.clientY > sr.bottom - 40) scroller.scrollTop += 20
@@ -101,12 +171,29 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
       window.removeEventListener('mousemove', move)
       window.removeEventListener('mouseup', up)
       setBand(null)
-      if (!moved && !additive) setSel(new Set())
+      if (!moved && !additive) { setSel(new Set()); setUpSel(new Set()) }
     }
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
   }
   const toggle = (id: number) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s) }
+  const upToggle = (id: string) => { const s = new Set(upSel); s.has(id) ? s.delete(id) : s.add(id); setUpSel(s) }
+  // uploads in progress: only in the main list, only those going to the folder shown; optional state filter
+  const upFilter = params.get('upload') || ''
+  const upVisible = view !== 'active' ? [] : uploads.tasks.filter((u) =>
+    (params.get('folder') ? u.folder === Number(params.get('folder')) : true) &&
+    (upFilter === 'uploading' ? ['queued', 'uploading', 'saving'].includes(u.state)
+      : upFilter === 'paused' ? u.state === 'paused' : upFilter === 'failed' ? u.state === 'error' : true))
+  const docsShown = upFilter ? [] : items  // the upload filters show uploads only
+  const cancelUploads = async (ids: string[]) => {
+    const n = ids.length
+    if (!n || !(await dlg.confirm({ title: n === 1 ? t('up_cancel_q') : `${t('up_cancel_many_q')} (${n})`,
+      message: t('up_cancel_msg'), ok: t('up_cancel'), danger: true }))) return
+    await uploads.cancel(ids)
+    setUpSel((s) => { const x = new Set(s); ids.forEach((i) => x.delete(i)); return x })
+  }
+  const upProps = (u: UpTask) => ({ task: u, selected: upSel.has(u.id), onToggle: () => upToggle(u.id),
+    onPause: () => uploads.pause([u.id]), onResume: () => uploads.resume([u.id]), onCancel: () => cancelUploads([u.id]) })
   const bulk = async (action: string, extra: any = {}) => {
     try { await api('/api/documents/bulk', { body: { ids: [...sel], action, ...extra } }); setSel(new Set()); load(); reload() } catch (e: any) { toast(e.detail) }
   }
@@ -130,24 +217,30 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   return (
     <div>
       {/* while documents are selected the selection actions replace the regular toolbar (same place, same height) */}
-      <div className={'toolbar' + (sel.size > 0 ? ' selecting' : '')}>
-        {sel.size > 0 ? <>
-        <b>{sel.size} {t('selected')}</b>
-        {view === 'active' && <>
+      <div className={'toolbar' + (sel.size + upSel.size > 0 ? ' selecting' : '')}>
+        {sel.size + upSel.size > 0 ? <>
+        <b>{sel.size + upSel.size} {t('selected')}</b>
+        {upSel.size > 0 && <>
+          <button onClick={() => uploads.pause([...upSel])}><Pause size={15} /> {t('up_pause')}</button>
+          <button onClick={() => uploads.resume([...upSel])}><Play size={15} /> {t('up_resume')}</button>
+          <button className="danger" onClick={() => cancelUploads([...upSel])}><X size={15} /> {t('up_cancel')}</button>
+        </>}
+        {view === 'active' && sel.size > 0 && <>
           <FolderMenu onPick={(f) => bulk('move', { folder_id: f })} />
           <TagAdder exclude={[]} icon={<TagIcon size={15} />} label={t('add_tag')} onAdd={(id) => bulk('tag_add', { tag_ids: [id] })} />
           <TagAdder exclude={[]} icon={<Tags size={15} />} label={t('remove_tag')} noCreate onAdd={(id) => bulk('tag_remove', { tag_ids: [id] })} />
           <button onClick={() => downloadPost('/api/documents/download-zip', { ids: [...sel], kind: 'pdf' }, 'documents.zip')}><Download size={15} /> {t('download_zip')}</button>
           <button className="danger" onClick={() => bulk('trash')}><Trash2 size={15} /> {t('to_trash')}</button>
         </>}
-        {view === 'trash' && <button onClick={() => bulk('restore')}><ArchiveRestore size={15} /> {t('restore')}</button>}
-        {(view === 'trash' || view === 'rejected') && user.role === 'admin' && <button className="danger" onClick={() => purge([...sel])}>{t('purge')}</button>}
+        {view === 'trash' && sel.size > 0 && <button onClick={() => bulk('restore')}><ArchiveRestore size={15} /> {t('restore')}</button>}
+        {(view === 'trash' || view === 'rejected') && sel.size > 0 && user.role === 'admin' && <button className="danger" onClick={() => purge([...sel])}>{t('purge')}</button>}
         <span className="spacer" />
-        <button className="link" onClick={() => setSel(new Set(items.map((d) => d.id)))}>{t('select_all')}</button>
-        <button className="link" onClick={() => setSel(new Set())}><X size={14} /> {t('clear_selection')}</button>
+        <button className="link" onClick={() => { setSel(new Set(docsShown.map((d) => d.id))); setUpSel(new Set(upVisible.map((u) => u.id))) }}>{t('select_all')}</button>
+        <button className="link" onClick={() => { setSel(new Set()); setUpSel(new Set()) }}><X size={14} /> {t('clear_selection')}</button>
         </> : <>
         <h2 style={{ margin: 0 }}>{heading}</h2>
         <span className="muted">{total} {params.get('q') ? t('results') : t('doc_count')}</span>
+        {upVisible.length > 0 && <button className="link small" onClick={() => setParam('upload', upFilter ? '' : 'uploading')}>· {upVisible.length} {t('up_count')}</button>}
         <span className="spacer" />
         {view === 'active' && <button onClick={() => setShowFilters(!showFilters)} className={showFilters ? 'active' : ''}><SlidersHorizontal size={15} /> {t('filters')}</button>}
         <Select value={params.get('sort') || ''} onChange={(v) => setParam('sort', v)} prefix={t('sort')}
@@ -168,6 +261,8 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
             options={[{ value: '', label: t('any') }, ...['image', 'pdf', 'office', 'mixed'].map((x) => ({ value: x, label: t('ft_' + x) }))]} />
           <Select prefix={t('review_status')} value={params.get('review') || ''} onChange={(v) => setParam('review', v)}
             options={[{ value: '', label: t('any') }, { value: 'needs_review', label: t('needs_review') }, { value: 'check', label: t('check') }, { value: 'ok', label: t('ok') }]} />
+          <Select prefix={t('up_filter')} value={upFilter} onChange={(v) => setParam('upload', v)}
+            options={[{ value: '', label: t('any') }, { value: 'uploading', label: t('up_f_uploading') }, { value: 'paused', label: t('up_f_paused') }, { value: 'failed', label: t('up_f_failed') }]} />
           <Select prefix={t('languages')} value={params.get('language') || ''} onChange={(v) => setParam('language', v)}
             options={[{ value: '', label: t('any') }, { value: 'ru', label: 'RU' }, { value: 'en', label: 'EN' }, { value: 'mixed', label: 'RU + EN' }]} />
           <span className="small muted">{t('received')}</span>
@@ -182,10 +277,12 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
       )}
       <div ref={area} className="results" onMouseDown={startBand}>
       {band && <div className="band" style={{ left: band.x, top: band.y, width: band.w, height: band.h }} />}
-      {!loading && items.length === 0 && <div className="page-pad muted">{t('nothing_found')}</div>}
+      {upFilter && <div className="filters small">{t('up_filter_on')} <button className="link" onClick={() => setParam('upload', '')}><X size={13} /> {t('clear_selection')}</button></div>}
+      {!loading && docsShown.length === 0 && upVisible.length === 0 && <div className="page-pad muted">{t('nothing_found')}</div>}
       {layout === 'grid' ? (
         <div className="grid">
-          {items.map((d) => (
+          {upVisible.map((u) => <UploadCard key={u.id} {...upProps(u)} />)}
+          {docsShown.map((d) => (
             <div key={d.id} data-doc-id={d.id} className={'doc-card' + (sel.has(d.id) ? ' sel' : '')} onClick={() => open(d)} draggable onDragStart={(e) => dragStart(e, d)}>
               <input type="checkbox" className="chk" checked={sel.has(d.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(d.id)} />
               <span className="tierdot"><TierBadge tier={d.needs_review ? 'low' : d.tier} status={d.status} /></span>
@@ -207,7 +304,8 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           <thead><tr><th style={{ width: 30 }}><input type="checkbox" checked={sel.size === items.length && items.length > 0} onChange={(e) => setSel(e.target.checked ? new Set(items.map((d) => d.id)) : new Set())} /></th>
             <th>{t('title')}</th><th>{t('folder')}</th><th>{t('tags')}</th><th>{t('source')}</th><th>{t('received')}</th><th>{t('status')}</th></tr></thead>
           <tbody>
-            {items.map((d) => (
+            {upVisible.map((u) => <UploadRow key={u.id} {...upProps(u)} />)}
+            {docsShown.map((d) => (
               <tr key={d.id} data-doc-id={d.id} className={sel.has(d.id) ? 'sel' : ''} onClick={() => open(d)} style={{ cursor: 'pointer' }} draggable onDragStart={(e) => dragStart(e, d)}>
                 <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(d.id)} onChange={() => toggle(d.id)} /></td>
                 <td className="title-cell"><FileName name={d.title} /><Snippet text={d.snippet} /></td>
@@ -221,7 +319,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           </tbody>
         </table>
       )}
-      {items.length < total && <div style={{ textAlign: 'center', padding: 16 }}><button onClick={() => setLimit(limit + PAGE)}>{t('load_more')}</button></div>}
+      {!upFilter && items.length < total && <div style={{ textAlign: 'center', padding: 16 }}><button onClick={() => setLimit(limit + PAGE)}>{t('load_more')}</button></div>}
       </div>
       {upload && <UploadModal folderId={folderId} onClose={() => setUpload(false)} />}
     </div>

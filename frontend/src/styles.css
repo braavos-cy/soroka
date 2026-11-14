@@ -264,3 +264,17 @@ input.switch:checked::after { transform: translateX(14px); }
 input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
 /* badges must never be covered by neighbouring tabs (hover/active backgrounds) or by sticky page bars */
 .topbar { position: relative; z-index: 20; }
+
+/* uploads in progress (cards / rows until the server has created the document) */
+.upload-card { cursor: default; }
+.upload-card .up-thumb { flex-direction: column; gap: 6px; color: var(--muted); padding: 0 16px; }
+.upload-card .up-pct { font-size: 20px; font-weight: 600; color: var(--text); }
+.progress { width: 100%; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.progress > div { height: 100%; background: var(--accent); transition: width .2s; }
+.upload-card.up-paused .progress > div, .upload-row.up-paused .progress > div { background: var(--muted); }
+.upload-card.up-error .progress > div { background: var(--bad); }
+.up-actions { gap: 4px; flex-wrap: nowrap; }
+.up-actions > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.up-actions button { padding: 2px 6px; }
+.upload-row .progress { margin-top: 4px; max-width: 260px; }
+.danger-text { color: var(--bad); }
