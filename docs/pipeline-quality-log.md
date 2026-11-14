@@ -162,6 +162,26 @@ Triggered by a real 199-page upload (photos of a thick case file / bound pages o
   broke more (the facing page has text too, so correct sides were penalized). Needs a different approach:
   page-vs-facing-page separation (gutter/fold detection) or a learned page segmenter.
 
+## 2026-11-14 — page outline (MobileSAM) + flattening (UVDoc), editable
+
+- Compared on 10 problem pages (open bound case file, a page from the phone app as reference): MobileSAM
+  prompted with points on the text block finds the page far better than the classic detector; of four ways to
+  flatten (4 corners, UVDoc on the whole photo, UVDoc on the masked photo with or without a crop, Coons patch of
+  the mask edges) the user picked "mask -> UVDoc, cropped first". The Coons patch was rejected (mask edge wobble
+  becomes wavy text).
+- Production: models exported to ONNX at image build (no PyTorch in the app). Outline cleaned (largest region,
+  holes, spurs, smooth edge, strongly coloured spill removed); finger notches filled with paper colour.
+- Gates, found by measurement: (1) flat photos keep the exact 4-corner crop: UVDoc on flat angled test pages cost
+  ~2-5% word recall; the outline's bend separates them (flat <= 1.6% of the diagonal, books 2-12%, threshold 1.8%).
+  (2) whole-frame scans skip the outline: MobileSAM outlines the text area there (crop IoU fell to 0.13-0.8).
+  (3) a coloured object touching the page made the outline look curved: colour spill removed before measuring.
+- Mesh editing: UVDoc's 45 x 31 grid sampled to 11 x 8 control points (visually the same result; a Catmull-Rom
+  spline reproduces the full grid within 2/255 - OpenCV's cubic remap did not: 18/255).
+- Results: eval sets unchanged (scan/flat paths identical); 199 real pages: book pages cropped tight and
+  flattened, 4 pages without a usable outline keep the old crop, 0 errors. +1.5-2 s per photo.
+- Not done: the phone app's crisper "scan look" (white page / black text) and a second UVDoc pass were tried on
+  one page and help visually; not in production.
+
 ## Known gaps / next steps
 
 - 2/40 hard-set documents are still rejected: dark, low-contrast, shadowed Russian pages where every boundary
