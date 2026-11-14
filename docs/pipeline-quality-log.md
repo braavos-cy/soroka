@@ -147,6 +147,21 @@ Triggered by a real 199-page upload (photos of a thick case file / bound pages o
   (its only correct-looking candidate does cut the last lines; earlier it won by luck through the rescue).
 - Known gap: page 36-type crops (side follows a text line on a page lying on more pages) are still too tight.
 
+## 2026-11-14 — deep desk bands; open-book photos (known gap)
+
+- Page 18 of a real 199-page upload: the chosen quad's bottom side ran ~10% below the page, through the desk.
+  The edge trim ignored it on purpose (no clean paper within 8% = treated as a shadow). New: a second pass looks
+  further in (25%) for a band that is solidly unlike paper, ends in a sharp step, is deep at both ends of the
+  side and contains no text; only then it is trimmed. Tried and rejected on the way: a brighter far paper sample
+  for all trimming (trimmed shaded margins on 98 pages), deep trims without the text check (cut text on open-book
+  pages), wedge-shaped deep trims (dark cast shadows in the hard set). Result: on the 199 pages only page 18
+  changes; eval sets unchanged.
+- Known gap: photos of a bound / open book (pages ~60–199 of that upload): several crops still have a slanted
+  side through the text (e.g. 60, 71, 81, 96, 158, 159, 177, 189) or include the facing page / desk (86, 87, 161,
+  163, 183, 185–191, 196). Checking "text continues beyond the side" on every side was tried: it fixed a few and
+  broke more (the facing page has text too, so correct sides were penalized). Needs a different approach:
+  page-vs-facing-page separation (gutter/fold detection) or a learned page segmenter.
+
 ## Known gaps / next steps
 
 - 2/40 hard-set documents are still rejected: dark, low-contrast, shadowed Russian pages where every boundary
