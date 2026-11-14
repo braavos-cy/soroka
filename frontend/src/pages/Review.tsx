@@ -5,6 +5,7 @@ import { useT } from '../i18n'
 import { useStore } from '../store'
 import { FileName, fmtDate, TierBadge } from '../components/Pickers'
 import { Check, FileX, PenSquare } from 'lucide-react'
+import { cropLabel, cropOptions } from '../components/cropOptions'
 
 type Item = { page_id: number; document_id: number; title: string; tier: string; page_no: number; received_at: string; flagged: { stage: string; tier: string; method: string }[] }
 
@@ -37,7 +38,7 @@ export default function ReviewPage() {
     setItems((xs) => xs.filter((x) => x.page_id !== cur.page_id)); reload()
   }
 
-  const cands = detail?.stages_detail?.crop?.info?.candidates || []
+  const opts = detail ? cropOptions(detail.stages_detail, detail.width, detail.height) : []
   return (
     <div>
       <div className="toolbar">
@@ -67,17 +68,17 @@ export default function ReviewPage() {
               <button onClick={() => act('open')}><PenSquare size={15} /> {t('open_editor')}</button>
               <button className="danger" onClick={() => act('non_document')}><FileX size={15} /> {t('not_document')}</button>
             </div>
-            {cands.length > 1 && detail.original_url ? (
+            {opts.length > 1 && detail.original_url ? (
               <>
                 <div className="small muted">{t('candidates')} — {t('stage_crop')}</div>
-                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(3, cands.length)}, 1fr)`, gap: 8 }}>
-                  {cands.slice(0, 3).map((c: any) => (
-                    <div key={c.method} className="col" style={{ gap: 4, cursor: 'pointer' }} onClick={() => pickCrop(c.quad)}>
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(3, opts.length)}, 1fr)`, gap: 8 }}>
+                  {opts.slice(0, 3).map((c) => (
+                    <div key={c.key} className="col" style={{ gap: 4, cursor: 'pointer' }} onClick={() => pickCrop(c.quad)}>
                       <div className="imgwrap"><img src={detail.original_url} alt="" style={{ maxHeight: 360 }} />
                         <svg viewBox={`0 0 ${detail.width} ${detail.height}`} preserveAspectRatio="none">
                           <polygon points={c.quad.map((p: number[]) => p.join(',')).join(' ')} fill="rgba(47,111,237,.15)" stroke="#2f6fed" strokeWidth={detail.width / 150} />
                         </svg></div>
-                      <span className="small">{c.method} · {c.score.toFixed(2)}</span>
+                      <span className="small">{cropLabel(c, t)}</span>
                     </div>
                   ))}
                 </div>
