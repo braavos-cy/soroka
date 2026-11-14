@@ -760,6 +760,16 @@ def estimate_deskew(img: np.ndarray) -> tuple[float, str, dict]:
     return round(best, 2), tier, {"peak": round(peak, 3), "gain_vs_zero": round(fine[max(fine, key=fine.get)] / (base + 1e-9), 3)}
 
 
+def paper_fill(img: np.ndarray) -> tuple | float:
+    """Colour of the paper (median of the brighter part of the page), used to fill areas a rotation adds."""
+    small, _ = downscale(img, 400)
+    g = gray(small)
+    bright = small[g >= np.percentile(g, 60)]
+    if small.ndim == 2:
+        return float(np.median(bright))
+    return tuple(float(v) for v in np.median(bright.reshape(-1, small.shape[2]), axis=0))
+
+
 def rotate_small(img: np.ndarray, angle: float) -> np.ndarray:
     if abs(angle) < 0.05:
         return img
@@ -769,7 +779,10 @@ def rotate_small(img: np.ndarray, angle: float) -> np.ndarray:
     nw, nh = int(h * sin + w * cos), int(h * cos + w * sin)
     M[0, 2] += nw / 2 - w / 2
     M[1, 2] += nh / 2 - h / 2
-    return cv2.warpAffine(img, M, (nw, nh), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    # the corners the rotation adds are filled with the paper colour; BORDER_REPLICATE smeared the edge pixels
+    # across them (stretched-pixel streaks along all four edges)
+    return cv2.warpAffine(img, M, (nw, nh), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT,
+                          borderValue=paper_fill(img))
 
 
 def text_line_curvature(img: np.ndarray) -> float:
