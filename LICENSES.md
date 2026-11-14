@@ -22,7 +22,7 @@ linked libraries, on our own server (no redistribution), which those licenses pe
 | pikepdf / qpdf | PDF assembly | MPL-2.0 / Apache-2.0 |
 | Tesseract 5 | OCR + OSD | Apache-2.0 |
 | MobileSAM (code + weights `mobile_sam.pt`, commit f706ad9) | page outline (mask) on photos | Apache-2.0 |
-| UVDoc (code + weights `best_model.pkl`, commit 4c9b82b) | page flattening mesh | MIT |
+| SyntheticDoc (code commit aabd9cf + checkpoints `original_31x45.ckpt`, `highres_121x177.ckpt`) | page flattening + shading correction | MIT |
 | ONNX Runtime 1.20 | runs the two models above (exported to ONNX at image build) | MIT |
 | PyTorch, torchvision, timm, onnx (build stage only, not in the final image) | model export | BSD-3 / BSD-3 / Apache-2.0 / Apache-2.0 |
 | tessdata_best `rus`, `eng`; tessdata `osd` (model weights) | OCR models | Apache-2.0 |

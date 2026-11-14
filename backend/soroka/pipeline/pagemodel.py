@@ -1,9 +1,10 @@
-"""Page mask (MobileSAM) and flattening (UVDoc), run with onnxruntime.
+"""Page mask (MobileSAM) and flattening + shading correction (SyntheticDoc), run with onnxruntime.
 
 Photos of pages (in particular bound / curved ones): MobileSAM, prompted with points on the page's text block,
 returns the page as a mask; the mask is cleaned (largest region, holes filled, spurs removed, edge smoothed) and
 kept as an editable outline (polygon). The page image is the photo with everything outside the outline set to
-black, cropped to the outline's bounding box; UVDoc then flattens it.
+black, cropped to the outline's bounding box; SyntheticDoc then flattens it (backward map, low or high resolution)
+and can divide out the page's shading (a lighting map: it only brightens / evens existing pixels).
 
 Models are exported to ONNX at image build time (backend/models/export_models.py) into MODELS_DIR.
 """
@@ -20,11 +21,13 @@ MODELS_DIR = os.environ.get("MODELS_DIR", "/models")
 SAM_SIZE = 1024
 SAM_MEAN = np.array([123.675, 116.28, 103.53], np.float32)
 SAM_STD = np.array([58.395, 57.12, 57.375], np.float32)
-UV_W, UV_H = 488, 712
+# SyntheticDoc models: file, input width, input height (backward map 31 x 45 / 121 x 177)
+FLATTEN = {"low": ("flatten_low.onnx", 512, 720), "high": ("flatten_high.onnx", 1024, 1440)}
+MODEL_FILES = ("sam_encoder.onnx", "sam_decoder.onnx", FLATTEN["low"][0], FLATTEN["high"][0])
 
 
 def available() -> bool:
-    return all(os.path.exists(os.path.join(MODELS_DIR, f)) for f in ("sam_encoder.onnx", "sam_decoder.onnx", "uvdoc.onnx"))
+    return all(os.path.exists(os.path.join(MODELS_DIR, f)) for f in MODEL_FILES)
 
 
 @functools.lru_cache(maxsize=None)
@@ -208,19 +211,54 @@ def masked_crop(img: np.ndarray, polygon: list, pad: float = 0.02) -> np.ndarray
     return out
 
 
-# ---------------------------------------------------------------- UVDoc
+# ---------------------------------------------------------------- SyntheticDoc
+def _linear_weights(n_in: int, n_out: int) -> np.ndarray:
+    """n_out x n_in linear interpolation matrix, ends on ends (align_corners=True)."""
+    t = np.linspace(0, n_in - 1, n_out)
+    i = np.clip(np.floor(t).astype(int), 0, max(0, n_in - 2))
+    f = (t - i).astype(np.float32)
+    W = np.zeros((n_out, n_in), np.float32)
+    W[np.arange(n_out), i] = 1 - f
+    if n_in > 1:
+        W[np.arange(n_out), i + 1] += f
+    return W
+
+
 def _upsample(a: np.ndarray, w: int, h: int) -> np.ndarray:
-    """Bilinear resize with align_corners=True (as UVDoc's torch code), i.e. grid corners stay on image corners."""
+    """Bilinear resize with align_corners=True (as grid_sample's torch code), exact (cv2.remap would quantize the
+    sample positions to 1/32 of a cell: visible wobble when a coarse map is stretched over a large page)."""
     gh, gw = a.shape
-    mx, my = np.meshgrid(np.linspace(0, gw - 1, w, dtype=np.float32), np.linspace(0, gh - 1, h, dtype=np.float32))
-    return cv2.remap(a.astype(np.float32), mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    return _linear_weights(gh, h) @ a.astype(np.float32) @ _linear_weights(gw, w).T
 
 
-def _grid(img: np.ndarray) -> np.ndarray:
-    """UVDoc's unwarping grid for a page image: 45 x 31 x 2, source positions in [-1, 1]."""
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255
-    x = cv2.resize(rgb, (UV_W, UV_H), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1)[None]
-    return _session("uvdoc.onnx").run(None, {"image": np.ascontiguousarray(x)})[0][0].transpose(1, 2, 0)
+def _predict(img: np.ndarray, model: str) -> tuple[np.ndarray, np.ndarray]:
+    """SyntheticDoc on a page image: backward map (gh x gw x 2, source positions in [-1, 1]) and shading map
+    (BGR in 0..1, at the model's input size)."""
+    from PIL import Image  # same downscale as the model was trained / evaluated with (PIL bilinear, antialiased)
+    name, mw, mh = FLATTEN[model]
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    x = (np.asarray(Image.fromarray(rgb).resize((mw, mh), Image.BILINEAR), np.float32) / 255 - 0.5) / 0.5
+    grid, shade = _session(name).run(None, {"image": np.ascontiguousarray(x.transpose(2, 0, 1)[None])})
+    return grid[0].transpose(1, 2, 0), (shade[0].transpose(1, 2, 0) * 0.5 + 0.5)[..., ::-1]
+
+
+def remove_shading(img: np.ndarray, shading: np.ndarray) -> np.ndarray:
+    """Divide the page's lighting out (SyntheticDoc's own rule: weaker on already bright photos, so a bright page
+    is not washed out)."""
+    h, w = img.shape[:2]
+    s = cv2.resize(np.ascontiguousarray(shading), (w, h), interpolation=cv2.INTER_LINEAR)
+    x = img.astype(np.float32) / 255
+    k = min(1.0, 0.4 / max(float(x.mean()), 1e-6))
+    s = s * k + (1 - k)
+    return (np.clip(x / np.maximum(s, 0.1), 0, 1) * 255 + 0.5).astype(np.uint8)
+
+
+def _remap(img: np.ndarray, grid: np.ndarray) -> np.ndarray:
+    """Apply a backward map (gh x gw x 2 in [-1, 1]); output keeps the input size."""
+    h, w = img.shape[:2]
+    gx, gy = _upsample(grid[..., 0], w, h), _upsample(grid[..., 1], w, h)
+    return cv2.remap(img, (gx + 1) / 2 * (w - 1), (gy + 1) / 2 * (h - 1), cv2.INTER_LINEAR,
+                     borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
 
 
 def _sample(a: np.ndarray, rows: int, cols: int, interp=cv2.INTER_LINEAR) -> np.ndarray:
@@ -234,10 +272,10 @@ def _sample(a: np.ndarray, rows: int, cols: int, interp=cv2.INTER_LINEAR) -> np.
 MESH_ROWS, MESH_COLS = 11, 8  # editable control points; the full mesh is interpolated between them
 
 
-def flatten_mesh(img: np.ndarray, rows: int = MESH_ROWS, cols: int = MESH_COLS) -> list:
-    """Editable flattening mesh proposed by UVDoc: rows x cols control points, each the position in the page
-    image (0..1 of its width / height) that maps to that point of the flat output."""
-    g = _sample(_grid(img), rows, cols)
+def _control_mesh(grid: np.ndarray, rows: int = MESH_ROWS, cols: int = MESH_COLS) -> list:
+    """rows x cols control points, each the position in the page image (0..1 of its width / height) that maps to
+    that point of the flat output."""
+    g = _sample(grid, rows, cols)
     return [[[round(float((x + 1) / 2), 5), round(float((y + 1) / 2), 5)] for x, y in r] for r in g]
 
 
@@ -255,7 +293,7 @@ def _spline_weights(n_in: int, n_out: int) -> np.ndarray:
 
 
 def apply_mesh(img: np.ndarray, mesh: list) -> np.ndarray:
-    """Flatten with a control mesh (see flatten_mesh); output keeps the input size."""
+    """Flatten with a control mesh (see _control_mesh); output keeps the input size."""
     h, w = img.shape[:2]
     m = np.array(mesh, np.float32)  # rows x cols x 2 in 0..1
     wy, wx = _spline_weights(m.shape[0], h), _spline_weights(m.shape[1], w)
@@ -264,13 +302,19 @@ def apply_mesh(img: np.ndarray, mesh: list) -> np.ndarray:
                      borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
 
 
-def flatten(img: np.ndarray) -> np.ndarray:
-    """Flatten a page photo with UVDoc; output keeps the input size."""
-    h, w = img.shape[:2]
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255
-    x = cv2.resize(rgb, (UV_W, UV_H), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1)[None]
-    grid = _session("uvdoc.onnx").run(None, {"image": np.ascontiguousarray(x)})[0][0]  # 2 x 45 x 31 in [-1, 1]
-    gx, gy = _upsample(grid[0], w, h), _upsample(grid[1], w, h)
-    map_x = ((gx + 1) / 2 * (w - 1)).astype(np.float32)
-    map_y = ((gy + 1) / 2 * (h - 1)).astype(np.float32)
-    return cv2.remap(img, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+def flatten_page(img: np.ndarray, model: str | None, shading: bool, mesh: list | None = None) -> tuple[np.ndarray, list | None]:
+    """The flat page and the model's proposed control mesh (for the editor).
+    model: None (no flattening) | "low" | "high"; shading: divide out the lighting; mesh: a hand-edited control mesh,
+    used instead of the model's map (the model still provides the shading)."""
+    model = model if model in FLATTEN else None
+    if not (model or shading) or not available():
+        return (apply_mesh(img, mesh) if mesh else img), None
+    grid, shade = _predict(img, model or "high")
+    src = remove_shading(img, shade) if shading else img
+    if mesh:
+        out = apply_mesh(src, mesh)
+    elif model:
+        out = _remap(src, grid)
+    else:
+        out = src
+    return out, (_control_mesh(grid) if model else None)
