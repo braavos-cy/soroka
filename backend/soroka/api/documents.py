@@ -473,6 +473,24 @@ def page_image(page_id: int, variant: str = "render", p: Principal = Depends(ui_
     return resp
 
 
+@router.get("/pages/{page_id}/flatten-source")
+def flatten_source(page_id: int, p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
+    """The cropped page before flattening (what the flattening mesh is drawn on in the editor), max 2000 px."""
+    import cv2
+
+    from ..pipeline.runner import page_base_image
+    pg = _get_page(db, page_id)
+    rec = db.get(m.Recipe, pg.current_recipe_id) if pg.current_recipe_id else None
+    if pg.kind != "image" or not pg.original_key:
+        raise HTTPException(404, "not_ready")
+    img = page_base_image(pg, rec.data if rec else {})
+    scale = min(1.0, 2000 / max(img.shape[:2]))
+    if scale < 1:
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    return Response(buf.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
 @router.get("/pages/{page_id}")
 def get_page(page_id: int, p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
     pg = _get_page(db, page_id)
@@ -487,6 +505,8 @@ def get_page(page_id: int, p: Principal = Depends(ui_user), db: DB = Depends(get
         "stages_detail": pg.stages or {}, "text": pg.text,
         "render_url": f"/api/pages/{pg.id}/image?variant=render&v={(pg.render_key or '').split('-')[-1]}",
         "original_url": f"/api/pages/{pg.id}/image?variant=original" if pg.original_key else None,
+        "flatten_source_url": (f"/api/pages/{pg.id}/flatten-source?v={rec.version if rec else 0}"
+                               if pg.kind == "image" and pg.original_key else None),
     })
     return out
 

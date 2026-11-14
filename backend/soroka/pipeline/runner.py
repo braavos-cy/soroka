@@ -28,6 +28,7 @@ from ..search import index_document
 from ..storage import storage
 from . import cv as C
 from . import ocr as O
+from . import pagemodel as PM
 from .recipe import STAGES, normalize, stage_index
 from .sources import (decode_images, encode_image, office_to_pdf, pdf_page_kinds, pdf_page_words, render_pdf_page,
                       render_pdf_scan)
@@ -229,7 +230,7 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
     if rescue:  # another pass: no text inside the chosen page -> maybe the wrong boundary, try the next candidate
         alt = rescue[0]
         quad, _ = C.refine_quad(orig, alt["quad"])
-        rec["crop"].update({"quad": quad, "method": alt["method"]})
+        rec["crop"].update({"quad": quad, "method": alt["method"], "mode": "quad", "polygon": None})
         run.set_auto_value("crop", quad)
         prev = run.stages.get("crop", {}).get("info", {})
         run.record("crop", "done", "low", alt["method"], score=alt["score"], reason="no_text_in_first_choice",
@@ -240,9 +241,24 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
         run.candidates("crop", cands, chosen)
         # trim background bands still inside the chosen quad (desk strips along an edge)
         quad, refine = C.refine_quad(orig, chosen.value["quad"])
-        rec["crop"].update({"quad": quad, "method": chosen.method})
-        run.set_auto_value("crop", quad)
-        run.record("crop", "done", tier, chosen.method, score=chosen.score, **sig, refine=refine,
+        rec["crop"].update({"quad": quad, "method": chosen.method, "mode": "quad", "polygon": None})
+        method, page_mask = chosen.method, None
+        # photos: the page outline from MobileSAM (follows curved and partly covered pages; editable)
+        # curved pages (bound books, curls) use it with flattening; flat pages and scans keep the exact 4-corner
+        # crop (their outline is straight or the whole image), the outline is kept for the editor
+        # not on scans (the page is the whole frame): there MobileSAM outlines the text area instead of the page
+        is_scan = chosen.method == "full_frame" and sig.get("flat_scan", 0.0) > 0.7
+        polygon, page_mask = (None, {"reason": "scan"}) if is_scan else PM.page_outline(orig)
+        if polygon:
+            bend = PM.outline_bend(polygon)
+            page_mask["bend"] = round(bend, 4)
+            rec["crop"]["polygon"] = polygon
+            if bend >= PM.BEND_CURVED:
+                corners = PM.mask_corners(np.array(polygon, np.float32))
+                rec["crop"].update({"mode": "mask", "quad": corners.round(1).tolist()})
+                method = "page_mask"
+        run.set_auto_value("crop", rec["crop"]["polygon"] if rec["crop"]["mode"] == "mask" else quad)
+        run.record("crop", "done", tier, method, score=chosen.score, **sig, refine=refine, page_mask=page_mask,
                    candidates=[{"method": c.method, "score": c.score, "quad": c.value["quad"]} for c in cands])
         boundary_score = chosen.score
     elif rec["crop"]["quad"] is None:
@@ -253,8 +269,25 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
             run.record("crop", "done", "high", "manual")
         boundary_score = (run.stages.get("crop", {}).get("info", {}) or {}).get("score", 0.5)
 
-    # 4. perspective correction
-    img = C.warp(orig, rec["crop"]["quad"])
+    # 4. page image: outline mode = outside blacked out, cropped to the outline's box; 4-corner mode = perspective
+    base = _page_base(orig, rec["crop"])
+
+    # 6. flattening (UVDoc mesh, editable): right after the crop, so everything after sees the flat page
+    if run.auto("dewarp"):
+        enabled = rec["crop"].get("mode") == "mask" and PM.available()
+        rec["dewarp"].update({"enabled": enabled, "method": "uvdoc" if enabled else None,
+                              "mesh": PM.flatten_mesh(base) if enabled else None})
+        run.set_auto_value("dewarp", enabled)
+    elif stage_index("dewarp") >= run.from_idx and rec["dewarp"]["enabled"] and not rec["dewarp"]["mesh"]:
+        rec["dewarp"]["mesh"] = PM.flatten_mesh(base) if PM.available() else None  # turned on by hand: propose one
+    img = _dewarped(base, rec["dewarp"])
+    if stage_index("dewarp") >= run.from_idx:
+        curv = C.text_line_curvature(img)
+        tier = "high" if curv < 0.15 else ("medium" if curv < 0.3 else "low")
+        mesh = rec["dewarp"]["mesh"]
+        run.record("dewarp", "done" if rec["dewarp"]["enabled"] else "skipped", tier,
+                   ("manual" if rec["dewarp"]["manual"] else "uvdoc") if rec["dewarp"]["enabled"] else "none",
+                   curvature=curv, mesh=f"{len(mesh)}x{len(mesh[0])}" if mesh else None)
 
     # 2. acceptance (§4): text/colour signals measured on the cropped page, not the background
     if run.auto("acceptance"):
@@ -286,13 +319,6 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
         run.record("orientation", "done", "high", "manual", angle=rec["orientation"]["angle"])
     img = C.rotate90(img, rec["orientation"]["angle"])
 
-    # 6. dewarping: measure curvature; ML dewarp models (UVDoc/DocRes) arrive in phase 2
-    if stage_index("dewarp") >= run.from_idx:
-        curv = C.text_line_curvature(img)
-        tier = "high" if curv < 0.15 else ("medium" if curv < 0.3 else "low")
-        run.record("dewarp", "skipped", tier, "curvature_only", curvature=curv,
-                   reason="flat" if curv < 0.15 else "dewarp_model_not_installed")
-
     # 7. fine deskew
     if run.auto("deskew"):
         ang, tier, info = C.estimate_deskew(img)
@@ -320,7 +346,7 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
     ori = run.stages.get("orientation", {})
     if (result["valid_ratio"] < 0.35 and result["n_words"] >= 15 and not rec["orientation"]["manual"]
             and ori.get("method") != "ocr_4_rotations" and stage_index("orientation") >= run.from_idx):
-        base = C.warp(orig, rec["crop"]["quad"])
+        base = _dewarped(_page_base(orig, rec["crop"]), rec["dewarp"])
         angle, tier, info = _orientation_fallback(_normalized(base), "rus+eng")
         if angle != rec["orientation"]["angle"] and info["best_score"] > result["valid_ratio"] + 0.1:
             rec["orientation"]["angle"] = angle
@@ -348,6 +374,23 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
             if alts:
                 return _process_image_page(db, page, run, forced, rescue=alts)
         _acceptance_with_ocr(db, run, result)
+
+
+def _page_base(orig: np.ndarray, crop: dict) -> np.ndarray:
+    if crop.get("mode") == "mask" and crop.get("polygon"):
+        return PM.masked_crop(orig, crop["polygon"])
+    return C.warp(orig, crop["quad"])
+
+
+def _dewarped(base: np.ndarray, dewarp: dict) -> np.ndarray:
+    if dewarp.get("enabled") and dewarp.get("mesh"):
+        return PM.apply_mesh(base, dewarp["mesh"])
+    return base
+
+
+def page_base_image(page: m.Page, recipe: dict) -> np.ndarray:
+    """The cropped page before flattening (the image the flattening mesh is drawn on in the editor)."""
+    return _page_base(_load_original(page), normalize(recipe)["crop"])
 
 
 def _rescue_candidates(run: PageRun, chosen_quad: list, limit: int = 2) -> list[dict]:
