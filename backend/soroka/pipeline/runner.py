@@ -272,22 +272,24 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
     # 4. page image: outline mode = outside blacked out, cropped to the outline's box; 4-corner mode = perspective
     base = _page_base(orig, rec["crop"])
 
-    # 6. flattening (UVDoc mesh, editable): right after the crop, so everything after sees the flat page
+    # 6. flattening + shading correction (SyntheticDoc; model, shading and mesh editable): right after the crop,
+    # so everything after sees the flat page. Curved pages (outline crop): high-res model with shading.
+    d = rec["dewarp"]
     if run.auto("dewarp"):
-        enabled = rec["crop"].get("mode") == "mask" and PM.available()
-        rec["dewarp"].update({"enabled": enabled, "method": "uvdoc" if enabled else None,
-                              "mesh": PM.flatten_mesh(base) if enabled else None})
-        run.set_auto_value("dewarp", enabled)
-    elif stage_index("dewarp") >= run.from_idx and rec["dewarp"]["enabled"] and not rec["dewarp"]["mesh"]:
-        rec["dewarp"]["mesh"] = PM.flatten_mesh(base) if PM.available() else None  # turned on by hand: propose one
-    img = _dewarped(base, rec["dewarp"])
+        curved = rec["crop"].get("mode") == "mask" and PM.available()
+        d.update({"model": "high" if curved else None, "shading": curved, "mesh": None, "mesh_edited": False})
+        run.set_auto_value("dewarp", {"model": d["model"], "shading": d["shading"]})
+    img, proposed = _flattened(base, d)
+    if not d["mesh_edited"]:
+        d["mesh"] = proposed  # the model's map as an editable mesh
+    flat = img
     if stage_index("dewarp") >= run.from_idx:
         curv = C.text_line_curvature(img)
         tier = "high" if curv < 0.15 else ("medium" if curv < 0.3 else "low")
-        mesh = rec["dewarp"]["mesh"]
-        run.record("dewarp", "done" if rec["dewarp"]["enabled"] else "skipped", tier,
-                   ("manual" if rec["dewarp"]["manual"] else "uvdoc") if rec["dewarp"]["enabled"] else "none",
-                   curvature=curv, mesh=f"{len(mesh)}x{len(mesh[0])}" if mesh else None)
+        on = bool(d["model"] or d["shading"] or d["mesh_edited"])
+        run.record("dewarp", "done" if on else "skipped", tier,
+                   ("manual" if d["manual"] else "syntheticdoc") if on else "none", curvature=curv,
+                   model=d["model"], shading=d["shading"], mesh_edited=d["mesh_edited"])
 
     # 2. acceptance (§4): text/colour signals measured on the cropped page, not the background
     if run.auto("acceptance"):
@@ -346,7 +348,7 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
     ori = run.stages.get("orientation", {})
     if (result["valid_ratio"] < 0.35 and result["n_words"] >= 15 and not rec["orientation"]["manual"]
             and ori.get("method") != "ocr_4_rotations" and stage_index("orientation") >= run.from_idx):
-        base = _dewarped(_page_base(orig, rec["crop"]), rec["dewarp"])
+        base = flat
         angle, tier, info = _orientation_fallback(_normalized(base), "rus+eng")
         if angle != rec["orientation"]["angle"] and info["best_score"] > result["valid_ratio"] + 0.1:
             rec["orientation"]["angle"] = angle
@@ -377,15 +379,15 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
 
 
 def _page_base(orig: np.ndarray, crop: dict) -> np.ndarray:
+    if crop.get("mode") == "none" or not crop.get("quad") and not crop.get("polygon"):
+        return orig
     if crop.get("mode") == "mask" and crop.get("polygon"):
         return PM.masked_crop(orig, crop["polygon"])
     return C.warp(orig, crop["quad"])
 
 
-def _dewarped(base: np.ndarray, dewarp: dict) -> np.ndarray:
-    if dewarp.get("enabled") and dewarp.get("mesh"):
-        return PM.apply_mesh(base, dewarp["mesh"])
-    return base
+def _flattened(base: np.ndarray, d: dict) -> tuple[np.ndarray, list | None]:
+    return PM.flatten_page(base, d.get("model"), bool(d.get("shading")), d.get("mesh") if d.get("mesh_edited") else None)
 
 
 def page_base_image(page: m.Page, recipe: dict) -> np.ndarray:
