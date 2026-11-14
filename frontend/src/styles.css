@@ -313,6 +313,22 @@ input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
   .toolbar { padding: 8px 10px; gap: 6px; min-height: 0; }
   .toolbar h2 { font-size: 16px; }
   .filters { padding: 8px 10px; }
+  /* filter panel: 2-column grid; each date label on its own row above its two dates */
+  .filters:not(.small) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .filters:not(.small) > * { width: 100% !important; min-width: 0; } /* sender / chat have an inline width */
+  .filters:not(.small) > .dd-btn { justify-content: space-between; }
+  .filters:not(.small) > .dd-btn:last-of-type, .filters:not(.small) > span.small { grid-column: 1 / -1; }
+  .filters:not(.small) > span.small { margin: 4px 0 -4px; }
+  /* toolbar: title + Filters, then Sort (stretching), view toggle, Upload */
+  .toolbar:not(.selecting) > h2 { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .toolbar:not(.selecting) > .dd-btn { flex: 1 1 150px; min-width: 0; } /* too wide for the title row: starts row 2 */
+  .toolbar:not(.selecting) > .dd-btn .dd-val { white-space: nowrap; }
+  /* selection bar: count + Select all / Clear on top, then the actions two per row */
+  .toolbar.selecting > b { order: -3; flex: 1 1 auto; }
+  .toolbar.selecting > .link { order: -2; }
+  .toolbar.selecting > .spacer { display: none; }
+  .toolbar.selecting > :not(b):not(.link):not(.spacer) { flex: 1 1 calc(50% - 6px); min-width: 0; justify-content: flex-start; }
+  .toolbar.selecting > :not(b):not(.link):not(.spacer) .dd-val { flex: 1; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 10px; }
   .doc-card .thumb { height: 150px; }
   .doc-card .chk { width: 22px; height: 22px; }
