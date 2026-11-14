@@ -384,13 +384,25 @@ def _side_samples(q: np.ndarray, i: int, n: int = 40):
     return pts, nrm
 
 
-def _boundary_evidence(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tuple[float, float, dict]:
+def _band_mean(m: np.ndarray, pts: np.ndarray, nrm: np.ndarray, d0: float, d1: float) -> float:
+    """Mean of map m over a band parallel to a side, from d0 to d1 along the (inward) normal."""
+    h, w = m.shape[:2]
+    vals = []
+    for d in np.linspace(d0, d1, 6):
+        pp = (pts + nrm * d).astype(int)
+        ok = (pp[:, 0] >= 0) & (pp[:, 0] < w) & (pp[:, 1] >= 0) & (pp[:, 1] < h)
+        vals.extend(m[pp[ok, 1], pp[ok, 0]].tolist())
+    return float(np.mean(vals)) if vals else 0.0
+
+
+def _boundary_evidence(q: np.ndarray, lab: np.ndarray, grad: np.ndarray,
+                       ink: np.ndarray | None = None) -> tuple[float, float, dict]:
     """(edge support, inside/outside contrast) along the four sides. Sides on the image border have no
     outside and are skipped for contrast (page touching the frame)."""
     h, w = lab.shape[:2]
     off = max(4.0, min(h, w) * 0.012)
     gthr = max(6.0, float(np.percentile(grad, 80)))
-    edge, contrast, soft, n_out = [], [], [], 0
+    edge, contrast, soft, n_out, unsupported, cuts = [], [], [], 0, 0, 0
     for i in range(4):
         pts, nrm = _side_samples(q, i)
         inside = pts + nrm * off
@@ -412,6 +424,14 @@ def _boundary_evidence(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tupl
         sharp = float(np.median(g)) / (de + 1.0)
         soft.append(round(sharp, 3))
         contrast.append(0.0 if (de > 20 and sharp < 0.19) else de)
+        if edge[-1] < 0.3 and de < 25:  # no edge and no colour step: the side runs through the page / desk
+            unsupported += 1
+            if ink is not None:  # text continues beyond the side: it cuts through the page
+                band = max(off * 3, min(h, w) * 0.04)
+                tin = _band_mean(ink, pts, nrm, off, off + band)
+                tout = _band_mean(ink, pts, -nrm, off, off + band)
+                if tin > 0.05 and tout > 0.5 * tin:
+                    cuts += 1
     edge_s = float(np.mean(sorted(edge)[:3])) if edge else 0.0  # one weak side is tolerated
     # one weak side is tolerated (uneven light, a shadow along one edge), as long as the others are clear
     con = sorted(contrast)
@@ -421,20 +441,28 @@ def _boundary_evidence(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tupl
     if len(con) >= 3 and con[0] < 3:  # one side with no contrast at all: probably not a page edge
         con_s *= 0.6
     return edge_s, con_s, {"edge_sides": [round(e, 2) for e in edge], "contrast": [round(c, 1) for c in contrast],
-                           "sides_inside_frame": n_out, "sharpness": soft}
+                           "sides_inside_frame": n_out, "sharpness": soft, "unsupported_sides": unsupported,
+                           "cuts_text": cuts}
 
 
-def _score_page_quad(q: np.ndarray, lab: np.ndarray, grad: np.ndarray) -> tuple[float, dict]:
+def _score_page_quad(q: np.ndarray, lab: np.ndarray, grad: np.ndarray,
+                     ink: np.ndarray | None = None) -> tuple[float, dict]:
     area_total = float(lab.shape[0] * lab.shape[1])
     area = cv2.contourArea(q) / area_total
     area_s = 1.0 if 0.12 <= area <= 0.97 else (0.4 if area > 0.97 else 0.1)
     convex = _convex(q)
     ang = _angles_ok(q) if convex else 0.0
     asp = _aspect_score(q)
-    edge, con, sig = _boundary_evidence(q, lab, grad)
+    edge, con, sig = _boundary_evidence(q, lab, grad, ink)
     score = 0.25 * edge + 0.35 * con + 0.15 * ang + 0.15 * area_s + 0.10 * asp
     if not convex:
         score *= 0.5
+    # two sides without any evidence: a line inside the page (a stack edge, a table rule, a fold) paired with
+    # real edges; such quads cut through the text
+    if sig["unsupported_sides"] >= 2:
+        score *= 0.6
+    if sig["cuts_text"]:  # the crop would cut text lines off
+        score *= 0.7
     sig.update({"area": round(area, 3), "angles": ang, "aspect": round(asp, 3), "edge": round(edge, 3),
                 "inout_contrast": round(con, 3), "convex": convex})
     return score, sig
@@ -455,6 +483,9 @@ def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, d
     for ch in range(3):
         grad = np.maximum(grad, cv2.magnitude(cv2.Sobel(gl[..., ch], cv2.CV_32F, 1, 0),
                                               cv2.Sobel(gl[..., ch], cv2.CV_32F, 0, 1)) / 4)
+    # ink: thin dark strokes (text, rules), found as the difference between the text-free view and the photo
+    ink = (lab[..., 0] - cv2.cvtColor(small, cv2.COLOR_BGR2LAB)[..., 0].astype(np.float32)) > 40
+    ink = ink.astype(np.float32)
     H, W = img.shape[:2]
     full = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], dtype=np.float32)
 
@@ -473,9 +504,9 @@ def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, d
     cands: list[Candidate] = []
     scored = []
     for name, q in raw:
-        sc, sig = _score_page_quad(q, lab, grad)
+        sc, sig = _score_page_quad(q, lab, grad, ink)
         scored.append((name, q, sc, sig))
-    hough = sorted(((q, *_score_page_quad(q, lab, grad)) for q in _quads_hough(lab)), key=lambda x: -x[1])
+    hough = sorted(((q, *_score_page_quad(q, lab, grad, ink)) for q in _quads_hough(lab)), key=lambda x: -x[1])
     for q, sc, sig in hough[:3]:
         if not any(quad_iou(q, r) > 0.985 for _, r, _, _ in scored):
             scored.append(("hough_lines", q, sc, sig))
@@ -520,6 +551,80 @@ def warp(img: np.ndarray, quad: list) -> np.ndarray:
     dst = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
     M = cv2.getPerspectiveTransform(q, dst)
     return cv2.warpPerspective(img, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+
+def _edge_depths(bad: np.ndarray, maxd: int, bins: int = 24) -> tuple[float, float]:
+    """Background band along the top edge of a warped page (bad = non-paper pixels, text removed):
+    per column the depth of the first paper row, robust straight-line fit across the width, depths at both ends.
+    Stops at the first clean row, so an edge band is trimmed but nothing beyond it (no cutting into the page)."""
+    h, w = bad.shape
+    band = bad[:maxd + 3]
+    # a column is clean from row r on when 3 consecutive rows are paper
+    ok = ~(band[:-2] | band[1:-1] | band[2:])
+    first = np.where(ok.any(0), ok.argmax(0), maxd).astype(np.float32)
+    first = np.minimum(first, maxd)
+    xs, ds = [], []
+    for i in range(bins):
+        a, b = i * w // bins, (i + 1) * w // bins
+        med = float(np.median(first[a:b])) if b > a else maxd
+        # no clean paper within reach: a cast shadow or a dark printed area that continues into the page,
+        # not a background band (those end close to the edge) -> no evidence, the line is fitted on the rest
+        if med < maxd:
+            xs.append((a + b) / 2 / w)
+            ds.append(med)
+    if len(ds) < bins // 3:
+        return 0.0, 0.0
+    xs, ds = np.array(xs), np.array(ds)
+    if ds.max() < 1:
+        return 0.0, 0.0
+    # Theil-Sen line (robust to bins crossing a dark figure or a hand holding the page)
+    slopes = [(ds[j] - ds[i]) / (xs[j] - xs[i]) for i in range(len(xs)) for j in range(i + 1, len(xs))]
+    k = float(np.median(slopes))
+    c = float(np.median(ds - k * xs))
+    clip = lambda v: float(min(maxd, max(0.0, v)))  # noqa: E731
+    return clip(c), clip(c + k)
+
+
+def refine_quad(img: np.ndarray, quad: list, max_frac: float = 0.08) -> tuple[list, dict]:
+    """Trim background left inside a detected page quad: along each side, a solid band whose colour differs from the
+    paper next to it (table, floor, fingers) is cut off, at most max_frac of the page per side. Text and ruled lines
+    are removed first (closing), and trimming stops at the first clean paper row, so the page itself is never cut."""
+    q = order_quad(np.array(quad, dtype=np.float32))
+    w = max(np.linalg.norm(q[1] - q[0]), np.linalg.norm(q[2] - q[3]))
+    h = max(np.linalg.norm(q[3] - q[0]), np.linalg.norm(q[2] - q[1]))
+    sc = 900 / max(w, h)
+    W, H = max(40, int(w * sc)), max(40, int(h * sc))
+    dst = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(q, dst)
+    small = cv2.warpPerspective(img, M, (W, H), flags=cv2.INTER_AREA, borderMode=cv2.BORDER_CONSTANT,
+                                borderValue=(0, 0, 0))  # outside the photo counts as background
+    lab = _paper_view(small)
+    depths = {}
+    for side in range(4):  # top, right, bottom, left: rotate so the side is on top, ends ordered clockwise
+        v = np.rot90(lab, side)
+        hh, ww = v.shape[:2]
+        maxd = max(2, int(max_frac * hh))
+        # reference paper colour: the band just inside the trimming zone, same side (follows shadows / tints)
+        ref = np.median(v[maxd + 2:maxd + 2 + max(4, hh // 25)].reshape(-1, 3), axis=0)
+        d = v - ref
+        dist = np.sqrt((0.6 * d[..., 0]) ** 2 + d[..., 1] ** 2 + d[..., 2] ** 2)
+        depths[side] = _edge_depths(dist > 16, maxd)
+    # np.rot90 is counter-clockwise: k=1 puts the right edge on top (ends top->bottom), k=2 the bottom edge
+    # (right->left), k=3 the left edge (bottom->top)
+    t_l, t_r = depths[0]
+    r_t, r_b = depths[1]
+    b_r, b_l = depths[2]
+    l_b, l_t = depths[3]
+    new = np.array([[l_t, t_l], [W - 1 - r_t, t_r], [W - 1 - r_b, H - 1 - b_r], [l_b, H - 1 - b_l]], np.float32)
+    trimmed = float(max(max(v) for v in depths.values()))
+    if trimmed < 2:
+        return [[float(x), float(y)] for x, y in q], {"trimmed": 0.0}
+    back = cv2.perspectiveTransform(new.reshape(-1, 1, 2), np.linalg.inv(M)).reshape(4, 2)
+    info = {"trimmed": round(trimmed / max(W, H), 4),
+            "depths": {k: [round(a / (H if i % 2 == 0 else W), 3), round(b / (H if i % 2 == 0 else W), 3)]
+                       for i, (k, (a, b)) in enumerate(zip(("top", "right", "bottom", "left"),
+                                                           (depths[0], depths[1], depths[2], depths[3])))}}
+    return [[float(x), float(y)] for x, y in back], info
 
 
 # ---------------------------------------------------------------- 4. acceptance

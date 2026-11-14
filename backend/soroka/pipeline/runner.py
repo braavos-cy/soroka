@@ -222,8 +222,9 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
     boundary_score = 0.5
     if rescue:  # another pass: no text inside the chosen page -> maybe the wrong boundary, try the next candidate
         alt = rescue[0]
-        rec["crop"].update({"quad": alt["quad"], "method": alt["method"]})
-        run.set_auto_value("crop", alt["quad"])
+        quad, _ = C.refine_quad(orig, alt["quad"])
+        rec["crop"].update({"quad": quad, "method": alt["method"]})
+        run.set_auto_value("crop", quad)
         prev = run.stages.get("crop", {}).get("info", {})
         run.record("crop", "done", "low", alt["method"], score=alt["score"], reason="no_text_in_first_choice",
                    candidates=prev.get("candidates", []))
@@ -231,9 +232,11 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
     elif run.auto("crop"):
         cands, chosen, tier, sig = C.detect_boundary(orig)
         run.candidates("crop", cands, chosen)
-        rec["crop"].update({"quad": chosen.value["quad"], "method": chosen.method})
-        run.set_auto_value("crop", chosen.value["quad"])
-        run.record("crop", "done", tier, chosen.method, score=chosen.score, **sig,
+        # trim background bands still inside the chosen quad (desk strips along an edge)
+        quad, refine = C.refine_quad(orig, chosen.value["quad"])
+        rec["crop"].update({"quad": quad, "method": chosen.method})
+        run.set_auto_value("crop", quad)
+        run.record("crop", "done", tier, chosen.method, score=chosen.score, **sig, refine=refine,
                    candidates=[{"method": c.method, "score": c.score, "quad": c.value["quad"]} for c in cands])
         boundary_score = chosen.score
     elif rec["crop"]["quad"] is None:
