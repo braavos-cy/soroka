@@ -6,7 +6,7 @@ import { api, ApiError, Folder } from '../api'
 import { useStore } from '../store'
 import { useT } from '../i18n'
 
-const CHUNK = 8 * 1024 * 1024
+const CHUNK = 2 * 1024 * 1024  // small: a pause loses at most the chunk in flight
 const PARALLEL = 2
 
 export type UpState = 'queued' | 'uploading' | 'paused' | 'saving' | 'error'
@@ -25,6 +25,7 @@ export type UpTask = {
   low: boolean
   sessions: (string | null)[] // server upload session per file
   done: number[] // bytes confirmed by the server per file
+  gen: number // run generation: a resume starts a new run, an older run still winding down must not touch the task
 }
 export type NewUpload = Pick<UpTask, 'files' | 'path' | 'folder' | 'tagIds' | 'combine' | 'low'>
 
@@ -95,32 +96,41 @@ export function UploadsProvider({ children }: { children: React.ReactNode }) {
   const remove = (id: string) => { tasks.current = tasks.current.filter((x) => x.id !== id); xhrs.current.delete(id); render() }
 
   const run = useCallback(async (task: UpTask) => {
+    const gen = ++task.gen
     task.state = 'uploading'; task.error = undefined; render()
     xhrs.current.set(task.id, null)
-    const stopped = () => task.state !== 'uploading'
+    // a pause (state) or a pause + resume (new generation) ends this run; checked after every await
+    const stopped = () => task.state !== 'uploading' || task.gen !== gen
+    const check = () => { if (stopped()) throw new Stopped() }
     try {
       for (let i = 0; i < task.files.length; i++) {
         const f = task.files[i]
         if (!task.sessions[i]) {
           const s = await api('/api/uploads', { body: { filename: f.name, size: f.size } })
+          if (task.gen !== gen) { api(`/api/uploads/${s.id}`, { method: 'DELETE' }).catch(() => {}); throw new Stopped() }  // a newer run makes its own
           task.sessions[i] = s.id
           task.done[i] = 0
           // cancelled while the session was being created: cancel() did not know this id yet
           if (!tasks.current.includes(task)) { api(`/api/uploads/${s.id}`, { method: 'DELETE' }).catch(() => {}); throw new Stopped() }
         } else {
           const s = await api(`/api/uploads/${task.sessions[i]}`)  // resume: how much did the server keep?
+          check()
           task.done[i] = s.received
+          task.sent = task.done.reduce((a, b) => a + b, 0); render()
         }
         while (task.done[i] < f.size) {
-          if (stopped()) throw new Stopped()
+          check()
           const base = task.done.reduce((a, b) => a + b, 0)
           const start = task.done[i]
-          task.done[i] = await putChunk(`/api/uploads/${task.sessions[i]}?offset=${start}`, f.slice(start, start + CHUNK),
-            (n) => { task.sent = base + n; render() }, (x) => xhrs.current.set(task.id, x))
+          const received = await putChunk(`/api/uploads/${task.sessions[i]}?offset=${start}`, f.slice(start, start + CHUNK),
+            (n) => { if (task.gen === gen) { task.sent = base + n; render() } },
+            (x) => { if (task.gen === gen) xhrs.current.set(task.id, x) })
+          check()
+          task.done[i] = received
           task.sent = task.done.reduce((a, b) => a + b, 0); render()
         }
       }
-      if (stopped()) throw new Stopped()
+      check()
       task.state = 'saving'; render()
       const folder = await ensureFolder(task.folder, task.path)
       const fd = new FormData()
@@ -133,11 +143,11 @@ export function UploadsProvider({ children }: { children: React.ReactNode }) {
       reload(); window.dispatchEvent(new Event('soroka:reload'))
     } catch (e: any) {
       if (e instanceof Stopped) return  // paused or cancelled: state already set by pause()/cancel()
-      if (task.state === 'uploading' || task.state === 'saving') {
+      if (task.gen === gen && (task.state === 'uploading' || task.state === 'saving')) {
         task.state = 'error'; task.error = e?.detail || String(e); render()
       }
     } finally {
-      xhrs.current.set(task.id, null)
+      if (task.gen === gen) xhrs.current.set(task.id, null)
       pump()
     }
   }, [render, reload, toast, t])
@@ -155,7 +165,7 @@ export function UploadsProvider({ children }: { children: React.ReactNode }) {
       tasks.current.push({
         ...u, id: Math.random().toString(36).slice(2), state: 'queued', sent: 0,
         name: u.files.length === 1 ? u.files[0].name : `${u.files[0].name} +${u.files.length - 1}`,
-        size: u.files.reduce((a, f) => a + f.size, 0), sessions: u.files.map(() => null), done: u.files.map(() => 0),
+        size: u.files.reduce((a, f) => a + f.size, 0), sessions: u.files.map(() => null), done: u.files.map(() => 0), gen: 0,
       })
     }
     render(); pump()
@@ -167,6 +177,7 @@ export function UploadsProvider({ children }: { children: React.ReactNode }) {
       if (!task || !(task.state === 'queued' || task.state === 'uploading')) continue  // 'saving' cannot be paused
       task.state = 'paused'
       xhrs.current.get(id)?.abort()
+      task.sent = task.done.reduce((a, b) => a + b, 0)  // show what the server has, not the aborted chunk
     }
     render(); pump()
   }, [render, pump])
