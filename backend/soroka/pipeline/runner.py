@@ -23,6 +23,7 @@ from .. import appsettings
 from .. import models as m
 from ..config import settings
 from ..db import SessionLocal, now
+from ..jobs import enqueue_page
 from ..search import index_document
 from ..storage import storage
 from . import cv as C
@@ -533,11 +534,13 @@ def build_document_pdf(db, doc: m.Document) -> None:
 def finalize_document(document_id: int) -> None:
     db = SessionLocal()
     try:
+        # row lock: page jobs finishing at the same time finalize one after the other, not interleaved
+        db.execute(sa_text("SELECT id FROM document WHERE id = :i FOR UPDATE"), {"i": document_id})
         doc = db.get(m.Document, document_id)
         if doc is None or doc.current_version_id is None:
             return
         v = db.get(m.DocumentVersion, doc.current_version_id)
-        pages = [db.get(m.Page, pid) for pid in v.page_ids]
+        pages = [db.get(m.Page, pid, populate_existing=True) for pid in v.page_ids]
         pages = [p for p in pages if p]
         if any(p.status in ("queued", "processing") for p in pages):
             return  # another job will finalize
@@ -604,10 +607,17 @@ def process_document(document_id: int) -> None:
                 split_document(db, doc)
             v = db.get(m.DocumentVersion, doc.current_version_id)
             forced = bool(doc.ingest_event and doc.ingest_event.forced)
-            for pid in v.page_ids:
-                p = db.get(m.Page, pid)
-                if p.status != "ready" or p.pipeline_version != settings().pipeline_version:
-                    process_page(db, p, "quality", forced)
+            todo = [p for p in (db.get(m.Page, pid) for pid in v.page_ids)
+                    if p.status != "ready" or p.pipeline_version != settings().pipeline_version]
+            # one job per page: every worker (one per core) takes pages, so a long document uses all CPUs;
+            # the last page job to finish finalizes the document (finalize_document waits for queued pages)
+            for p in todo:
+                p.status = "queued"
+            db.commit()
+            for i, p in enumerate(todo):
+                # a long document should not hold up live ingest: beyond the first pages it goes to the backlog
+                prio = doc.queue if i < 4 else "low"
+                enqueue_page(p.id, "quality", prio, forced=forced)
         except Exception as e:  # noqa: BLE001
             db.rollback()
             log.exception("document %s failed", document_id)
@@ -615,18 +625,20 @@ def process_document(document_id: int) -> None:
             doc.status, doc.status_detail = "error", str(e)[:2000]
             db.commit()
             return
+        if todo:
+            return
     finally:
         db.close()
     finalize_document(document_id)
 
 
-def process_page_job(page_id: int, from_stage: str) -> None:
+def process_page_job(page_id: int, from_stage: str, forced: bool = False) -> None:
     db = SessionLocal()
     try:
         p = db.get(m.Page, page_id)
         if p is None:
             return
-        process_page(db, p, from_stage)
+        process_page(db, p, from_stage, forced)
         doc_ids = [r[0] for r in db.execute(
             sa_text(
                 "SELECT d.id FROM document d JOIN document_version v ON v.id = d.current_version_id "

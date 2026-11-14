@@ -23,8 +23,8 @@ def enqueue_document(document_id: int, priority: str = "high") -> None:
                             job_id=f"doc-{document_id}-{_nonce()}")
 
 
-def enqueue_page(page_id: int, from_stage: str = "quality", priority: str = "default") -> None:
-    queue(priority).enqueue("soroka.pipeline.runner.process_page_job", page_id, from_stage)
+def enqueue_page(page_id: int, from_stage: str = "quality", priority: str = "default", forced: bool = False) -> None:
+    queue(priority).enqueue("soroka.pipeline.runner.process_page_job", page_id, from_stage, forced)
 
 
 def enqueue_finalize(document_id: int, priority: str = "default") -> None:

@@ -38,8 +38,11 @@ services:
     <<: *backend
     # priority: live ingest > user edits re-render > bulk backlog
     command: ["rq", "worker", "--url", "redis://redis:6379/0", "high", "default", "low"]
+    # one worker per CPU core, each page is its own job; Tesseract single-threaded so 4 pages run in parallel
+    environment:
+      TESSERACT_THREADS: "1"
     deploy:
-      replicas: 2
+      replicas: 4
 
   scheduler:
     <<: *backend
