@@ -23,7 +23,7 @@ from .. import appsettings
 from .. import models as m
 from ..config import settings
 from ..db import SessionLocal, now
-from ..jobs import enqueue_page
+from ..jobs import enqueue_document, enqueue_page
 from ..search import index_document
 from ..storage import storage
 from . import cv as C
@@ -542,7 +542,7 @@ def finalize_document(document_id: int) -> None:
         # row lock: page jobs finishing at the same time finalize one after the other, not interleaved
         db.execute(sa_text("SELECT id FROM document WHERE id = :i FOR UPDATE"), {"i": document_id})
         doc = db.get(m.Document, document_id)
-        if doc is None or doc.current_version_id is None:
+        if doc is None or doc.current_version_id is None or doc.trashed_at is not None or doc.status == "stopped":
             return
         v = db.get(m.DocumentVersion, doc.current_version_id)
         pages = [db.get(m.Page, pid, populate_existing=True) for pid in v.page_ids]
@@ -591,11 +591,70 @@ def _reject(db, doc: m.Document, reason: str) -> None:
     index_document(db, doc)
 
 
+# ---------------------------------------------------------------- stop / resume
+def halted(doc: m.Document | None) -> bool:
+    """Trashed, rejected or deleted documents are not processed; restore / rescue resumes them."""
+    return doc is None or doc.trashed_at is not None or doc.status == "rejected"
+
+
+def _docs_of_page(db, page_id: int) -> list[m.Document]:
+    ids = [r[0] for r in db.execute(sa_text(
+        "SELECT d.id FROM document d JOIN document_version v ON v.id = d.current_version_id "
+        "WHERE v.page_ids @> jsonb_build_array(CAST(:p AS int))"), {"p": page_id}).all()]
+    return [db.get(m.Document, i) for i in ids]
+
+
+def stop_processing(db, doc: m.Document) -> int:
+    """Stop a document's processing: unfinished pages become 'stopped' (no partial result is kept: a page that was
+    being processed starts from its first stage when the document is resumed) and running page jobs are killed.
+    Queued page jobs see the halted document when they start and do nothing. Caller commits."""
+    from rq.command import send_stop_job_command
+    from rq.registry import StartedJobRegistry
+
+    from ..jobs import queue, redis
+    page_ids = set()
+    for v in db.query(m.DocumentVersion).filter_by(document_id=doc.id).all():
+        page_ids.update(v.page_ids or [])
+    stopped = 0
+    for pid in page_ids:
+        pg = db.get(m.Page, pid)
+        if pg and pg.status != "ready" and not any(not halted(d) for d in _docs_of_page(db, pid) if d.id != doc.id):
+            pg.status, stopped = "stopped", stopped + 1
+    if doc.status in ("queued", "processing"):
+        doc.status = "stopped"
+    db.flush()
+    db.commit()  # before killing: a job starting from now on sees the halted document
+    for name in ("high", "default", "low"):
+        reg = StartedJobRegistry(queue=queue(name))
+        for job_id in reg.get_job_ids():
+            try:
+                job = queue(name).fetch_job(job_id)
+                if job is None:
+                    continue
+                fn = job.func_name or ""
+                if ((fn.endswith("process_page_job") and job.args and job.args[0] in page_ids)
+                        or (fn.endswith("process_document") and job.args and job.args[0] == doc.id)):
+                    send_stop_job_command(redis(), job.id)  # registry entries are 'job_id:execution_id' in RQ 2
+            except Exception:  # noqa: BLE001 - the job may have finished meanwhile
+                log.warning("could not stop job %s", job_id, exc_info=True)
+    return stopped
+
+
+def resume_processing(db, doc: m.Document) -> bool:
+    """Continue a stopped document: finished pages are kept, the others are processed from the start."""
+    if doc.status != "stopped":
+        return False
+    doc.status = "processing"
+    db.commit()
+    enqueue_document(doc.id, doc.queue or "high")
+    return True
+
+
 def process_document(document_id: int) -> None:
     db = SessionLocal()
     try:
         doc = db.get(m.Document, document_id)
-        if doc is None or doc.trashed_at is not None:
+        if halted(doc):
             return
         doc.status = "processing"
         db.commit()
@@ -643,11 +702,14 @@ def process_page_job(page_id: int, from_stage: str, forced: bool = False) -> Non
         p = db.get(m.Page, page_id)
         if p is None:
             return
+        docs = _docs_of_page(db, page_id)
+        if docs and all(halted(d) for d in docs):  # trashed / rejected meanwhile: resume will pick it up
+            if p.status != "ready":
+                p.status = "stopped"
+                db.commit()
+            return
         process_page(db, p, from_stage, forced)
-        doc_ids = [r[0] for r in db.execute(
-            sa_text(
-                "SELECT d.id FROM document d JOIN document_version v ON v.id = d.current_version_id "
-                "WHERE v.page_ids @> jsonb_build_array(CAST(:p AS int))"), {"p": page_id}).all()]
+        doc_ids = [d.id for d in docs]
     finally:
         db.close()
     for d in doc_ids:
