@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { NavLink, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
+import { NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, setUnauthHandler, User } from './api'
 import { Lang, LangCtx, makeT, useT } from './i18n'
 import { StoreProvider, useStore } from './store'
@@ -13,7 +13,7 @@ import AccountPage from './pages/Account'
 import { ReauthModal } from './components/Reauth'
 import { DialogProvider } from './components/ui'
 import { UploadsProvider } from './components/uploads'
-import { PanelLeftClose, PanelLeftOpen, Bird, CircleUser, ListChecks, LogOut, Search, Settings, ShieldX, Trash2 } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Bird, CircleUser, ListChecks, LogOut, Menu, Search, Settings, ShieldX, Trash2 } from 'lucide-react'
 
 export default function App() {
   const [lang, setLangState] = useState<Lang>(() => {
@@ -54,6 +54,10 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     if (q.trim()) p.set('q', q.trim()); else p.delete('q')
     nav('/?' + p.toString())
   }
+  // narrow screens (phones): the folder / tag pane is a drawer opened from the menu button; closes on navigation
+  const [drawer, setDrawer] = useState(false)
+  const loc = useLocation()
+  useEffect(() => setDrawer(false), [loc.pathname, loc.search])
   const logout = async () => { await api('/api/auth/logout', { method: 'POST' }); onLogout() }
   // left pane: collapsible + resizable, remembered per browser
   const SIDE_DEFAULT = 260, SIDE_MIN = 180, SIDE_MAX = 520
@@ -73,7 +77,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     <div className="app">
       <header className="topbar">
         <button className="icon side-toggle" onClick={() => setSideOpen(!sideOpen)} title={sideOpen ? t('hide_sidebar') : t('show_sidebar')}>{sideOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}</button>
-        <NavLink to="/" className="logo"><Bird size={20} strokeWidth={2.2} /> {t('app')}</NavLink>
+        <button className="icon drawer-toggle" onClick={() => setDrawer(true)} title={t('show_sidebar')}><Menu size={20} /></button>
+        <NavLink to="/" className="logo"><Bird size={20} strokeWidth={2.2} /> <span className="logo-txt">{t('app')}</span></NavLink>
         <form className="search" onSubmit={submit}>
           <Search size={15} className="search-icon" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('search')} type="search" />
@@ -96,6 +101,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
             <div className="side-resizer" onMouseDown={startResize} onDoubleClick={() => setSideW(SIDE_DEFAULT)} title={t('resize_sidebar')} />
           </div>
         )}
+        {drawer && <div className="drawer-bg" onClick={() => setDrawer(false)}><div className="drawer" onClick={(e) => e.stopPropagation()}><Sidebar /></div></div>}
         <div className="content">
           <Routes>
             <Route path="/" element={<DocumentsPage view="active" />} />
