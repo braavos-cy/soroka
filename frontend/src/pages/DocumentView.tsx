@@ -5,6 +5,7 @@ import { useT } from '../i18n'
 import { useStore } from '../store'
 import { FolderSelect, fmtBytes, fmtDate, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Menu, Select, useDialog } from '../components/ui'
+import { CROP_COLORS, cropLabel, cropOptions } from '../components/cropOptions'
 import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, History, Maximize, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
 
 const STAGES = ['quality', 'acceptance', 'crop', 'orientation', 'dewarp', 'deskew', 'cleanup', 'ocr', 'layout', 'consistency', 'outputs']
@@ -148,7 +149,7 @@ function CropEditor({ page, onApply, onCancel }: { page: any; onApply: (q: Pt[])
   const [drag, setDrag] = useState<number | null>(null)
   const [mag, setMag] = useState<{ x: number; y: number; px: number; py: number } | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
-  const cands = page.stages_detail?.crop?.info?.candidates || []
+  const opts = cropOptions(page.stages_detail, W, H)
   const toImg = (e: React.PointerEvent) => {
     const r = svgRef.current!.getBoundingClientRect()
     return { x: Math.max(0, Math.min(W - 1, ((e.clientX - r.left) / r.width) * W)), y: Math.max(0, Math.min(H - 1, ((e.clientY - r.top) / r.height) * H)), px: e.clientX - r.left, py: e.clientY - r.top, rw: r.width }
@@ -161,14 +162,13 @@ function CropEditor({ page, onApply, onCancel }: { page: any; onApply: (q: Pt[])
   }
   const zoom = 3
   const scale = svgRef.current ? svgRef.current.getBoundingClientRect().width / W : 1
-  const colors = ['#f59e0b', '#10b981', '#8b5cf6', '#ec4899', '#06b6d4']
   return (
     <div className="col" style={{ alignItems: 'center' }}>
       <div className="imgwrap" style={{ touchAction: 'none' }}>
         <img src={page.original_url} alt="" draggable={false} />
         <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" onPointerMove={move} onPointerUp={() => { setDrag(null); setMag(null) }} onPointerLeave={() => { setDrag(null); setMag(null) }}>
-          {cands.map((c: any, i: number) => (
-            <polygon key={c.method} points={c.quad.map((p: Pt) => p.join(',')).join(' ')} fill="none" stroke={colors[i % colors.length]} strokeWidth={2 / scale} strokeDasharray={`${8 / scale} ${6 / scale}`} opacity={0.8} />
+          {opts.map((o, i) => (
+            <polygon key={o.key} points={o.quad.map((p: Pt) => p.join(',')).join(' ')} fill="none" stroke={CROP_COLORS[i % CROP_COLORS.length]} strokeWidth={2 / scale} strokeDasharray={`${8 / scale} ${6 / scale}`} opacity={0.8} />
           ))}
           <polygon points={quad.map((p) => p.join(',')).join(' ')} fill="rgba(47,111,237,.12)" stroke="#2f6fed" strokeWidth={2.5 / scale} />
           {quad.map((p, i) => (
@@ -186,8 +186,9 @@ function CropEditor({ page, onApply, onCancel }: { page: any; onApply: (q: Pt[])
         )}
       </div>
       <div className="row">
-        {cands.map((c: any, i: number) => (
-          <button key={c.method} onClick={() => setQuad(c.quad)} style={{ borderColor: colors[i % colors.length] }}>{c.method} · {c.score.toFixed(2)}</button>
+        {opts.map((o, i) => (
+          <button key={o.key} onClick={() => setQuad(o.quad)} title={o.method ? t('crop_option_hint') : t('crop_auto_hint')}
+            style={{ borderColor: CROP_COLORS[i % CROP_COLORS.length], borderWidth: 2 }}>{cropLabel(o, t)}</button>
         ))}
         <button title={t('full_page')} onClick={() => setQuad([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]])}><Maximize size={15} /></button>
         <span className="spacer" />
