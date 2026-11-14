@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { api, Folder } from '../api'
+import { api, Folder, uploadForm } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
 import { FolderSelect, TagAdder, TagChips } from './Pickers'
@@ -89,7 +89,13 @@ export default function UploadModal({ folderId, onClose }: { folderId: number | 
           const fd = new FormData()
           part.forEach((it) => fd.append('files', it.file, it.file.name))
           fd.append('meta', JSON.stringify({ platform: 'upload', folder_id: target, tag_ids: tagIds, combine, priority: low ? 'low' : 'high' }))
-          const r = await api('/api/ingest', { form: fd })
+          const r = await uploadForm<any>('/api/ingest', fd, (sent, total) => {
+            const mb = (b: number) => (b / 1048576).toFixed(1)
+            const pct = Math.floor((sent / total) * 100)
+            // all bytes sent: the server is storing the files and creating the documents
+            setProgress(sent >= total ? `${t('upload_processing')}` :
+              `${items.length > 1 ? `${n + 1}–${n + part.length} / ${items.length} · ` : ''}${pct}% (${mb(sent)} / ${mb(total)} MB)`)
+          })
           docs += r.document_ids.length; dups += r.duplicates.length
           n += part.length
           setProgress(`${n} / ${items.length}`)
@@ -121,7 +127,7 @@ export default function UploadModal({ folderId, onClose }: { folderId: number | 
         <label className="inline"><input type="checkbox" checked={low} onChange={(e) => setLow(e.target.checked)} />{t('bulk_low_priority')}</label>
       </div>
       <div className="row" style={{ marginTop: 16 }}>
-        {busy && <span className="muted">{t('uploading')} {progress}</span>}
+        {busy && <span className="muted">{t('uploading')} {progress} — {t('upload_keep_open')}</span>}
         <span className="spacer" />
         <button onClick={onClose} disabled={busy}>{t('cancel')}</button>
         <button className="primary" onClick={submit} disabled={busy || !items.length}>{t('upload')}</button>
