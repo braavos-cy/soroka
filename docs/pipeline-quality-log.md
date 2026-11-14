@@ -124,6 +124,29 @@ lowcontrast (light desk + shadow + low light) is the weak spot: 6/8 orientation,
 5. **Fail safe.** Stricter rejection turns every upstream error (wrong crop) into a lost document; the retry with
    alternative crops is what keeps that in check.
 
+## 2026-11-14 — crop: trim leftover background, don't cut through text
+
+Triggered by a real 199-page upload (photos of a thick case file / bound pages on a desk). Two crop errors:
+
+- **Desk left inside the crop** (pages 25, 28, 29, 34, 38, 46, 60, 66, 72, 76…): a dark strip of desk along the
+  top or bottom edge. New `cv.refine_quad` runs after boundary detection: per side, in the text-free view, it finds
+  how deep a band of non-paper colour (compared with the paper just inside that side) reaches from the edge, fits a
+  robust line through the per-column depths (slanted wedges are handled) and moves the two corners in.
+  It stops at the first clean paper row and is capped at 8% per side, so it never cuts into the page.
+  Columns that never reach clean paper inside the cap are ignored: that is a cast shadow, not a band — without this
+  rule 8/80 exact crops were cut too deep (all shadows), with it 2/80.
+  Check (`eval/check_refine.py`, crops loosened by 1–5%): mean IoU 0.910 → 0.986, 64 improved, 0 worse;
+  exact crops stay at 0.998.
+- **Crop line running through the text** (pages 65, 70, 74, 82, 83): a Hough line from a page lower in the stack
+  paired with three real edges. One weak side was tolerated, so it scored 0.9. New check: for a side with no
+  edge and no colour step, compare ink (thin dark strokes) just outside and just inside; if text continues outside
+  the crop cuts the page (score ×0.7). Two evidence-free sides → ×0.6. A ×0.55 penalty was too strong: it pushed
+  correct candidates below the 0.45 rescue cut-off. Checking text running *along* a side (to catch page 36, whose
+  bottom side follows the last text line) was dropped: a receipt's dark paper edge looks the same.
+- Eval: hard set unchanged (same 3 failures as before); set 1 loses one low-contrast receipt
+  (its only correct-looking candidate does cut the last lines; earlier it won by luck through the rescue).
+- Known gap: page 36-type crops (side follows a text line on a page lying on more pages) are still too tight.
+
 ## Known gaps / next steps
 
 - 2/40 hard-set documents are still rejected: dark, low-contrast, shadowed Russian pages where every boundary
