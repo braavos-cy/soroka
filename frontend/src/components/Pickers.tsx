@@ -29,14 +29,20 @@ export function TagChips({ ids, onRemove, singleLine }: { ids: number[]; onRemov
   const list = ids.map((id) => byId.get(id)).filter(Boolean) as typeof tags
   const ref = useRef<HTMLDivElement>(null)
   const [overflow, setOverflow] = useState(false)
+  const [edge, setEdge] = useState({ l: false, r: false }) // more tags hidden to the left / right
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const check = () => setOverflow(el.scrollWidth > el.clientWidth + 1)
+    const check = () => {
+      setOverflow(el.scrollWidth > el.clientWidth + 1)
+      const l = el.scrollLeft > 1, r = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+      setEdge((e) => (e.l === l && e.r === r ? e : { l, r }))
+    }
     check()
     const ro = new ResizeObserver(check)
     ro.observe(el)
-    return () => ro.disconnect()
+    el.addEventListener('scroll', check, { passive: true })
+    return () => { ro.disconnect(); el.removeEventListener('scroll', check) }
   }, [list.length, singleLine])
   // vertical wheel scrolls sideways while there is room to scroll (page scrolling is not hijacked).
   // Native non-passive listener: React's onWheel is passive and cannot preventDefault.
@@ -59,7 +65,7 @@ export function TagChips({ ids, onRemove, singleLine }: { ids: number[]; onRemov
   ))
   if (!singleLine) return chips.length ? <span className="row" style={{ gap: 4 }}>{chips}</span> : null
   return (
-    <div ref={ref} className={'chips-line' + (overflow ? ' scrolling' : '')} onClick={(e) => overflow && e.stopPropagation()}>{chips}</div>
+    <div ref={ref} className={'chips-line' + (overflow ? ' scrolling' : '') + (edge.l ? ' more-l' : '') + (edge.r ? ' more-r' : '')} onClick={(e) => overflow && e.stopPropagation()}>{chips}</div>
   )
 }
 

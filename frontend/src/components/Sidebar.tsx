@@ -51,6 +51,20 @@ export default function Sidebar() {
     return m
   }, [folders])
 
+  // a folder selected from outside the tree ("Show in folders", a link, back/forward): unfold its parents once
+  // and bring it into view; collapsing by hand afterwards is respected
+  const revealed = useRef<number | null>(null)
+  useEffect(() => {
+    if (loc.pathname !== '/' || sel == null) { revealed.current = null; return }
+    if (revealed.current === sel || !folders.length) return
+    revealed.current = sel
+    const byId = new Map(folders.map((f) => [f.id, f]))
+    const up: Record<number, boolean> = {}
+    for (let p = byId.get(sel)?.parent_id, n = 0; p != null && n < 100; p = byId.get(p)?.parent_id, n++) up[p] = true
+    if (Object.keys(up).length) setOpen((o) => ({ ...o, ...up }))
+    requestAnimationFrame(() => document.querySelectorAll('.sidebar .tree-item.sel').forEach((el) => el.scrollIntoView({ block: 'nearest' })))
+  }, [sel, folders, loc.pathname])
+
   const listView = ['/', '/rejected', '/trash'].includes(loc.pathname)
   // tag filters apply to the current list (documents, rejected or trash); 'stay' = false always goes to documents
   const go = (mut: (p: URLSearchParams) => void, stay = true) => {

@@ -24,7 +24,7 @@ from .organize import subtree_ids
 router = APIRouter(prefix="/api", tags=["documents"])
 
 SORTS = {"received_desc": m.Document.received_at.desc(), "received_asc": m.Document.received_at.asc(),
-         "date_desc": m.Document.document_date.desc().nullslast(), "title": m.Document.title.asc()}
+         "date_desc": m.Document.updated_at.desc(), "title": m.Document.title.asc()}
 
 
 def _ids(s: str | None) -> list[int]:
@@ -45,7 +45,7 @@ def doc_summary(d: m.Document, first_page: int | None = None, thumb_v: str | Non
     ev = d.ingest_event
     return {"id": d.id, "title": d.title, "folder_id": d.folder_id, "status": d.status, "tier": d.tier,
             "needs_review": d.needs_review, "page_count": d.page_count, "received_at": d.received_at,
-            "document_date": d.document_date, "source": d.source_platform, "file_type": d.file_type,
+            "updated_at": d.updated_at, "source": d.source_platform, "file_type": d.file_type,
             "language": d.language, "tags": [t.id for t in d.tags], "trashed_at": d.trashed_at,
             "first_page_id": first_page, "thumb_v": thumb_v, "snippet": snippet,
             "sender": (ev.sender_name or ev.sender_phone or ev.sender_email) if ev else "",
@@ -118,9 +118,9 @@ def list_documents(
     if received_to:
         qry = qry.filter(m.Document.received_at < _date(received_to) + timedelta(days=1))
     if date_from:
-        qry = qry.filter(m.Document.document_date >= _date(date_from))
+        qry = qry.filter(m.Document.updated_at >= _date(date_from))
     if date_to:
-        qry = qry.filter(m.Document.document_date < _date(date_to) + timedelta(days=1))
+        qry = qry.filter(m.Document.updated_at < _date(date_to) + timedelta(days=1))
 
     tsq, terms = build_tsquery(db, q) if q.strip() else (None, [])
     total = None
@@ -166,6 +166,8 @@ def get_document(doc_id: int, p: Principal = Depends(ui_user), db: DB = Depends(
     out = doc_summary(d, ids[0] if ids else None, thumb_version(pages.get(ids[0])) if ids else None)
     out.update({
         "status_detail": d.status_detail, "has_pdf": bool(d.pdf_key),
+        # last change of the document or of any of its pages (page edits do not always touch the document row)
+        "updated_at": max([d.updated_at, *(pg.updated_at for pg in pages.values())]),
         "pages": [page_summary(pages[i]) for i in ids if i in pages],
         "files": [{"id": f.id, "filename": f.filename, "mime": f.mime, "size": f.size,
                    "has_rendition": bool(f.rendition_key)} for f in files],
@@ -187,8 +189,6 @@ def get_document(doc_id: int, p: Principal = Depends(ui_user), db: DB = Depends(
 class DocPatch(BaseModel):
     title: str | None = None
     folder_id: int | None = None
-    document_date: str | None = None
-    clear_date: bool = False
     clear_folder: bool = False
     tag_ids: list[int] | None = None
 
@@ -205,10 +205,6 @@ def update_document(doc_id: int, body: DocPatch, request: Request, p: Principal 
         d.folder_id = body.folder_id
     elif body.clear_folder:
         d.folder_id = None
-    if body.clear_date:
-        d.document_date = None
-    elif body.document_date:
-        d.document_date = datetime.fromisoformat(body.document_date)
     if body.tag_ids is not None:
         db.query(m.DocumentTag).filter_by(document_id=d.id).delete()
         for t in dict.fromkeys(body.tag_ids):
