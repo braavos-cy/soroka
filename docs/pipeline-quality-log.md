@@ -205,6 +205,46 @@ Triggered by a real 199-page upload (photos of a thick case file / bound pages o
 - Known: an 11x8 hand-edited mesh cannot carry all the detail of the 121x177 model map (mean 18/255 difference
   vs the full map on a book page), so editing starts from a smoothed version of the model's flattening.
 
+## 2026-11-15 — order of tools (orient / crop / flatten / deskew / cleanup): study, no change
+
+Question: is another order (e.g. flatten first, then crop) or other tool settings better than production
+(crop → flatten curved pages → orientation → deskew → cleanup)? Each tool was run in isolation as an
+image → image step; final image OCR'd with the production call (rus+eng, PNG). Score = confident words
+(conf >= 80, alphabetic, >= 3 letters) on real pages; word recall vs ground truth on the synthetic sets.
+Equal scores broken by line straightness from the OCR word boxes (median |angle| and bow per line).
+
+- Real pages: 20 pages of the case file (12 hard: book spreads, fingers, rotated; 8 random; p005 is sideways
+  handwriting, uninformative). Phase A: every order of every subset of the 5 tools (326 pipelines). Phase B:
+  settings grid on 3 orders (crop auto/quad/mask x flattening auto/low/high/±shading/shading only x cleanup
+  auto/gray/color/bw, 217) + the real production runner. Phase D: both again with a page-validity metric.
+- **OCR alone is fooled.** "orient → cleanup → crop → flatten-low → deskew" ranked first (15/4 wins vs
+  production, p=0.02), but cleanup makes the crop detector find nothing (crop is a no-op on 15/20 pages), and
+  the low-res model does not crop by itself: the outputs were the whole photo — desk, hands, page stack — and
+  Tesseract reads past the clutter. Added a page-ness gate: largest MobileSAM mask holding the text must fill
+  >= 90% of the output (cropped pages 0.93–1.0, uncropped photos 0.65–0.85; one false negative: a mostly blank
+  page). Scores below are gated.
+- **Production ranks 7 of 284 (norm 0.949) and has the best worst case** (worst page 0.87 of that page's best;
+  1 page < 0.90). The 6 above it are +0.5–1.1%, none significant (best: 10 wins / 8 losses).
+- **Flatten first works only with the high-res model**, which then segments the page itself: orient →
+  flatten-high+shading on the uncropped photo → deskew → cleanup = 2981 words vs production 2982. Visibly
+  straighter on strongly curved book pages (p191: 199 vs 187 words), but sometimes keeps a fingertip.
+  Low-res on the uncropped photo never yields a page (fill 0.6–0.85).
+- **Crop first + always flatten loses** (2797): flattening an already flat, quad-cropped page distorts it
+  (p027: 73 vs 189). Production's "flatten only curved pages" gate is what avoids this.
+- **Cleanup before or after crop/flatten: a tie when the crop really runs** (mask crop: 8/8, 9/9 wins/losses).
+  The apparent "cleanup first" gain was entirely the skipped crop.
+- Ablation (best order per tool set): without flattening the curved pages lose most; without orientation the
+  rotated pages are lost; cleanup adds ~2–3%. Orientation must come first (rotated pages: crop/flatten on a
+  sideways page fail — p014 crop→flatten gave 1 word).
+- Settings (marginal means): flattening low ≈ high on cropped pages; shading-only (no geometry) is worst;
+  cleanup auto = color ≈ gray > bw.
+- Synthetic sets (40 normal + 19 of 40 hard documents, ground-truth recall; stopped early): production is
+  first of 77 by a wide margin (0.975 vs 0.899; hard 0.891 vs 0.563), also on upright images — the isolated
+  tools lack production's fallbacks (alternative crops, acceptance gates). Forced flattening hurts these flat
+  pages (0.90 → 0.71–0.77). So the synthetic sets cannot rank orders; they show the fallbacks matter more.
+- **Decision: no change.** Possible follow-up (not done): for strongly curved pages, offer flattening the
+  uncropped photo with the high-res model (straighter, same OCR), with a finger/background check.
+
 ## Known gaps / next steps
 
 - 2/40 hard-set documents are still rejected: dark, low-contrast, shadowed Russian pages where every boundary
