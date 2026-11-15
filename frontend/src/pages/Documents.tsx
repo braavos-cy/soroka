@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, DocSummary, downloadPost } from '../api'
 import { plural, useT } from '../i18n'
 import { folderPath, useStore } from '../store'
@@ -109,6 +109,24 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     api(`/api/documents?${query()}`).then((r) => { setItems(r.items); setTotal(r.total) }).catch((e) => toast(e.detail)).finally(() => setLoading(false))
   }, [query])
   useEffect(() => { load() }, [load])
+  // arriving from a document ("Show in folders"): scroll to it and flash it once; load further pages until it is found
+  const loc = useLocation()
+  const hl: number | undefined = (loc.state as any)?.highlight
+  const hlDone = useRef('')
+  useEffect(() => {
+    if (!hl || hlDone.current === loc.key || loading) return
+    if (!items.some((d) => d.id === hl)) {
+      if (items.length && items.length < total && limit < 2000) setLimit(limit + PAGE)
+      else if (items.length >= total && total > 0) hlDone.current = loc.key
+      return
+    }
+    hlDone.current = loc.key
+    const el = area.current?.querySelector<HTMLElement>(`[data-doc-id="${hl}"]`)
+    if (!el) return
+    el.scrollIntoView({ block: 'center' })
+    el.classList.add('flash')
+    setTimeout(() => el.classList.remove('flash'), 1600)
+  }, [hl, loc.key, items, total, loading, layout])
   useEffect(() => { setSel(new Set()); setUpSel(new Set()); setLimit(PAGE) }, [params, view])
   useEffect(() => {
     const h = () => load()
@@ -301,7 +319,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
                   {d.page_count > 0 && <span className="pages-count" title={plural(t, lang, d.page_count, 'pl_pages')}><Files size={13} />{d.page_count}</span>}
                 </div>
                 {view === 'rejected' && <button onClick={(e) => { e.stopPropagation(); rescue(d.id) }}>{t('rescue')}</button>}
-                {view === 'trash' && <button onClick={(e) => { e.stopPropagation(); setSel(new Set([d.id])); api('/api/documents/bulk', { body: { ids: [d.id], action: 'restore' } }).then(() => { load(); reload() }) }}>{t('restore')}</button>}
+                {view === 'trash' && <button onClick={(e) => { e.stopPropagation(); api('/api/documents/bulk', { body: { ids: [d.id], action: 'restore' } }).then(() => { setSel((o) => { const n = new Set(o); n.delete(d.id); return n }); load(); reload() }).catch((err) => toast(err.detail)) }}>{t('restore')}</button>}
                 {d.tags.length > 0 && <div className="card-tags"><TagChips ids={d.tags} singleLine /></div>}
               </div>
             </div>

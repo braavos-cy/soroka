@@ -38,7 +38,8 @@ export function CropEditor({ page, onApply, onCancel }: { page: any; onApply: (v
   const crop = page.recipe.crop
   const full: Pt[] = [[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]]
   const initialQuad: Pt[] = crop.quad || full
-  const [mode, setMode] = useState<'mask' | 'quad'>(crop.mode === 'mask' || (crop.mode !== 'quad' && crop.polygon) ? 'mask' : 'quad')
+  // outline or 4 corners: follows the crop type chosen in the pipeline panel
+  const [mode] = useState<'mask' | 'quad'>(crop.mode === 'mask' || (crop.mode !== 'quad' && crop.polygon) ? 'mask' : 'quad')
   const [quad, setQuad] = useState<Pt[]>(initialQuad)
   const [poly, setPoly] = useState<Pt[]>(crop.polygon || initialQuad)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -64,13 +65,6 @@ export function CropEditor({ page, onApply, onCancel }: { page: any; onApply: (v
   const hasAutoPoly = Array.isArray(autoPoly) && autoPoly.length > 4
   return (
     <div className="col" style={{ alignItems: 'center' }}>
-      <div className="row">
-        <div className="seg">
-          <button className={mode === 'mask' ? 'active' : ''} onClick={() => setMode('mask')}>{t('crop_outline')}</button>
-          <button className={mode === 'quad' ? 'active' : ''} onClick={() => setMode('quad')}>{t('crop_corners')}</button>
-        </div>
-        <span className="small muted">{mode === 'mask' ? t('outline_hint') : t('corners_hint')}</span>
-      </div>
       <div className="imgwrap" style={{ touchAction: 'none' }}>
         <img src={page.original_url} alt="" draggable={false} />
         <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" onPointerMove={move} onPointerUp={d.end} onPointerLeave={d.end}>

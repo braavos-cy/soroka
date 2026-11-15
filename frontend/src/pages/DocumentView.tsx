@@ -2,19 +2,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useT } from '../i18n'
-import { useStore } from '../store'
-import { DateInput, FolderSelect, fmtBytes, fmtDate, PageThumb, TagAdder, TagChips, TierBadge } from '../components/Pickers'
+import { folderPath, useStore } from '../store'
+import { fmtBytes, fmtDate, PageThumb, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Menu, Select, useDialog } from '../components/ui'
 import { CropEditor, MeshEditor } from '../components/PageEditors'
-import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, Eye, Grid3x3, History, Loader2, MoreHorizontal, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
+import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, FolderSearch, Grid3x3, History, Layers2, Loader2, MoreHorizontal, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
 
 const STAGES = ['quality', 'acceptance', 'crop', 'dewarp', 'orientation', 'deskew', 'cleanup', 'ocr', 'layout', 'consistency', 'outputs']
 type Pt = [number, number]
 
+// what the badge under a page thumbnail shows: a processing state, or the quality tier (reviewed = OK)
+const CAT_ORDER = ['high', 'medium', 'low', 'error', 'processing', 'queued', 'stopped', 'excluded', 'none']
+function pageCat(p: any): string {
+  if (['queued', 'processing', 'stopped', 'excluded', 'error'].includes(p.status)) return p.status
+  return p.reviewed ? 'high' : p.tier || 'none'
+}
+const CAT_COLOR: Record<string, string> = { high: 'var(--ok)', medium: 'var(--warn)', low: 'var(--bad)', error: 'var(--bad)', none: 'var(--muted)' }
+const catColor = (k: string) => CAT_COLOR[k] || 'var(--accent)'
+const catLabel = (t: (k: string) => string, k: string) => (['high', 'medium', 'low'].includes(k) ? t('tier_' + k) : k === 'none' ? '—' : t(k))
+
 export default function DocumentView() {
   const { id } = useParams()
   const { t } = useT()
-  const { user, reload: reloadStore, toast } = useStore()
+  const { user, folders, reload: reloadStore, toast } = useStore()
   const dlg = useDialog()
   const nav = useNavigate()
   // back to where the document was opened from (list, folder, search, review); opened by direct link -> the list
@@ -27,6 +37,15 @@ export default function DocumentView() {
   const [tab, setTab] = useState<'pipeline' | 'info' | 'text'>('pipeline')
   const [mode, setMode] = useState<'result' | 'crop'>('result')
   const [preview, setPreview] = useState<{ rotate?: number; deskew?: number } | null>(null)
+  const [thFilter, setThFilter] = useState<string | null>(null)
+  // filtering by status and the open page left that status (accepted, or re-processed into another one):
+  // move on to the first page that still has it. Not while the page is being processed - its status is temporary.
+  const curCat = doc?.pages?.[pageIdx] ? pageCat(doc.pages[pageIdx]) : null
+  useEffect(() => {
+    if (!thFilter || !doc || !curCat || curCat === thFilter || ['queued', 'processing'].includes(curCat)) return
+    const i = doc.pages.findIndex((p: any) => pageCat(p) === thFilter)
+    if (i >= 0) setPageIdx(i)
+  }, [thFilter, curCat, doc])
 
   const loadDoc = useCallback(() => api(`/api/documents/${id}`).then(setDoc).catch((e) => toast(e.detail)), [id])
   useEffect(() => { loadDoc() }, [loadDoc])
@@ -48,7 +67,11 @@ export default function DocumentView() {
     return () => window.removeEventListener('soroka:reload', h)
   }, [loadDoc, loadPage])
 
-  const patch = async (body: any) => { try { await api(`/api/documents/${id}`, { method: 'PATCH', body }); loadDoc(); reloadStore() } catch (e: any) { toast(e.detail) } }
+  // show the change at once (the server re-indexes the whole text on every change, which takes a moment); on failure reload the real state
+  const patch = async (body: any) => {
+    setDoc((d: any) => d && { ...d, ...(body.tag_ids ? { tags: body.tag_ids } : {}), ...(body.title != null ? { title: body.title } : {}) })
+    try { await api(`/api/documents/${id}`, { method: 'PATCH', body }); loadDoc(); reloadStore() } catch (e: any) { toast(e.detail); loadDoc() }
+  }
   const edit = async (stage: string, value: any, reset = false) => {
     try {
       const r = await api(`/api/pages/${page.id}/edit`, { body: { stage, value, reset } })
@@ -86,13 +109,29 @@ export default function DocumentView() {
     if (k === 'purge') purge()
   }
   const multi = doc.pages.length > 1
+  // page statuses present in this document, in a fixed order, with page counts
+  const counts: Record<string, number> = {}
+  for (const p of doc.pages) counts[pageCat(p)] = (counts[pageCat(p)] || 0) + 1
+  const cats = CAT_ORDER.filter((k) => counts[k]).map((k) => [k, counts[k]] as const)
+  // one status at a time; a status no page has any more falls back to "all"
+  const activeCat = thFilter && counts[thFilter] ? thFilter : null
+  const pickCat = (k: string | null) => {
+    setThFilter(k)
+    // the open page is not of this status: go to the first page that is
+    if (k && pageCat(doc.pages[pageIdx]) !== k) setPageIdx(doc.pages.findIndex((p: any) => pageCat(p) === k))
+  }
   return (
     <div className="doc-view">
-      {/* row 1: back, title, actions; row 2: what the document is (status, folder, date, tags) */}
+      {/* row 1: back, title; row 2: where it is, its tags (one line, scrolls when they do not fit), actions */}
       <div className="doc-head">
         <div className="dh-row">
           <button className="icon" onClick={goBack} title={t('back')}><ArrowLeft size={18} /></button>
           <input className="title-input" defaultValue={doc.title} key={doc.title} title={doc.title} onBlur={(e) => e.target.value !== doc.title && patch({ title: e.target.value })} />
+        </div>
+        <div className="dh-meta">
+          <button onClick={() => nav(trashed ? '/trash' : doc.status === 'rejected' ? '/rejected' : doc.folder_id ? `/?folder=${doc.folder_id}` : '/', { state: { highlight: doc.id } })} title={doc.folder_id ? folderPath(folders, doc.folder_id) : t('no_folder')}><FolderSearch size={15} /> <span className="lbl-phone-hide">{t('show_in_folders')}</span></button>
+          <TagAdder exclude={doc.tags} onAdd={(tid) => patch({ tag_ids: [...doc.tags, tid] })} />
+          <TagChips singleLine ids={doc.tags} onRemove={(tid) => patch({ tag_ids: doc.tags.filter((x: number) => x !== tid) })} />
           {doc.status === 'rejected' && <button className="primary" onClick={() => post(`/api/documents/${doc.id}/rescue`)}>{t('rescue')}</button>}
           {trashed && <button onClick={restore}><ArchiveRestore size={15} /> <span className="lbl-phone-hide">{t('restore')}</span></button>}
           <Menu icon={<Download size={15} />} label={t('download')} align="right" className="dl-btn" title={t('download')}
@@ -100,24 +139,26 @@ export default function DocumentView() {
             onSelect={(k) => window.open(`/api/documents/${doc.id}/download?kind=${k}`, '_blank')} />
           {more.length > 0 && <Menu icon={<MoreHorizontal size={16} />} caret={false} align="right" title={t('more_actions')} items={more} onSelect={onMore} />}
         </div>
-        <div className="dh-meta">
-          <TierBadge tier={doc.needs_review ? 'low' : doc.tier} status={doc.status} />
-          <FolderSelect value={doc.folder_id} allowEmpty onChange={(f) => patch(f ? { folder_id: f } : { clear_folder: true })} />
-          <DateInput value={doc.document_date ? doc.document_date.slice(0, 10) : ''} placeholder={t('doc_date')} title={t('doc_date')}
-            onChange={(v) => patch(v ? { document_date: v } : { clear_date: true })} />
-          <TagChips ids={doc.tags} onRemove={(tid) => patch({ tag_ids: doc.tags.filter((x: number) => x !== tid) })} />
-          <TagAdder exclude={doc.tags} onAdd={(tid) => patch({ tag_ids: [...doc.tags, tid] })} />
-        </div>
       </div>
       <div className={'viewer' + (multi ? '' : ' single')}>
         {/* page strip only for documents with several pages */}
         {multi && <div className="thumbs">
-          {doc.pages.map((p: any, i: number) => (
-            <div key={p.id} className={'th' + (i === pageIdx ? ' sel' : '')} onClick={() => setPageIdx(i)} title={`${t('page')} ${i + 1}`}>
-              <div className="th-img"><PageThumb pageId={p.id} v={p.thumb_v} status={p.status} /></div>
-              <div className="th-foot"><span>{i + 1}</span><TierBadge tier={p.reviewed ? 'high' : p.tier} status={p.status} /></div>
-            </div>
-          ))}
+          {/* show only pages of one status: "All" or the chosen status again clears it */}
+          <div className="th-filter">
+            <button className={activeCat ? '' : 'on'} onClick={() => pickCat(null)}>{t('all')} <b>{doc.pages.length}</b></button>
+            {cats.map(([k, n]) => (
+              <button key={k} className={activeCat === k ? 'on' : ''} style={{ ['--c' as any]: catColor(k) }}
+                onClick={() => pickCat(activeCat === k ? null : k)}><span className="dot" />{catLabel(t, k)} <b>{n}</b></button>
+            ))}
+          </div>
+          <div className="th-list">
+            {doc.pages.map((p: any, i: number) => (activeCat && pageCat(p) !== activeCat) ? null : (
+              <div key={p.id} className={'th' + (i === pageIdx ? ' sel' : '')} onClick={() => setPageIdx(i)} title={`${t('page')} ${i + 1}`}>
+                <div className="th-img"><PageThumb pageId={p.id} v={p.thumb_v} status={p.status} /></div>
+                <div className="th-foot"><span>{i + 1}</span><TierBadge tier={p.reviewed ? 'high' : p.tier} status={p.status} /></div>
+              </div>
+            ))}
+          </div>
         </div>}
         <div className="stage-area">
           {page ? <PageCanvas page={page} q={q} mode={mode} preview={preview} edit={(stage: string, v: any, reset?: boolean) => { edit(stage, v, reset); setMode('result') }} onCancelEdit={() => setMode('result')} />
@@ -164,18 +205,11 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
   // hold "Original" to see the unmodified page in place of the result
   const hold = (on: boolean) => (e: React.PointerEvent) => { e.preventDefault(); setComparing(on) }
   return (
-    <div className="col" style={{ alignItems: 'center', gap: 6 }}>
-      {page.original_url && (
-        <button className={'compare-btn' + (comparing ? ' active' : '')} title={t('compare_hint')}
-          onPointerDown={(e) => { (e.target as Element).setPointerCapture?.(e.pointerId); hold(true)(e) }} onPointerUp={hold(false)}
-          onPointerCancel={hold(false)} onLostPointerCapture={() => setComparing(false)} onContextMenu={(e) => e.preventDefault()}
-          onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setComparing(true) } }}
-          onKeyUp={() => setComparing(false)} onBlur={() => setComparing(false)}>
-          <Eye size={15} /> {t('compare')}
-        </button>
-      )}
+    <div className="canvas-col">
     <div className="imgwrap" style={{ transform: tf, transition: 'transform .15s' }}>
-      <img src={comparing ? page.original_url : page.render_url} alt="" />
+      {/* both images stay loaded, so switching is instant (the original used to be fetched on the first press) */}
+      <img key={'r' + page.id} src={page.render_url} alt="" style={comparing ? { display: 'none' } : undefined} />
+      {page.original_url && <img key={'o' + page.id} src={page.original_url} alt="" style={comparing ? undefined : { display: 'none' }} />}
       {!comparing && structure && hits.length > 0 && (
         <svg viewBox={`0 0 ${structure.width} ${structure.height}`} preserveAspectRatio="none">
           {hits.map((w: any, i: number) => <rect key={i} className="hl" x={w.box[0] - 2} y={w.box[1] - 2} width={w.box[2] + 4} height={w.box[3] + 4} rx={3} />)}
@@ -184,6 +218,15 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
       {['queued', 'processing'].includes(page.status) && <div className="canvas-busy"><Loader2 size={14} className="spin" /> {t(page.status)}</div>}
       {['stopped', 'excluded'].includes(page.status) && <div className="canvas-busy">{t(page.status)}</div>}
     </div>
+      {page.original_url && (
+        <button className={'compare-btn' + (comparing ? ' active' : '')} title={t('compare_hint')}
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture?.(e.pointerId); hold(true)(e) }} onPointerUp={hold(false)}
+          onPointerCancel={hold(false)} onLostPointerCapture={() => setComparing(false)} onContextMenu={(e) => e.preventDefault()}
+          onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setComparing(true) } }}
+          onKeyUp={() => setComparing(false)} onBlur={() => setComparing(false)}>
+          <Layers2 size={15} /> {t('compare')}
+        </button>
+      )}
     </div>
   )
 }
@@ -358,7 +401,8 @@ function InfoPanel({ doc }: { doc: any }) {
     <div className="page-pad col">
       <div className="kv">
         <span>{t('source')}</span><span>{t('source_' + doc.source)}</span>
-        <span>{t('received')}</span><span>{fmtDate(doc.received_at, true)}</span>
+        <span>{t('uploaded')}</span><span>{fmtDate(doc.received_at, true)}</span>
+        <span>{t('modified')}</span><span>{fmtDate(doc.updated_at, true)}</span>
         <span>{t('status')}</span><span>{doc.status} {doc.status_detail}</span>
         {doc.language && <><span>{t('languages')}</span><span>{doc.language}</span></>}
         {doc.rejected && <><span>{t('expires')}</span><span>{fmtDate(doc.rejected.expires_at, true)} ({doc.rejected.reason})</span></>}
