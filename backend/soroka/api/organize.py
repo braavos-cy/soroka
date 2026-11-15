@@ -117,7 +117,7 @@ def list_tags(p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
 
 class TagIn(BaseModel):
     name: str
-    color: str = "#64748b"
+    color: str = "#7b8794"
 
 
 def _clean_tag(name: str) -> str:
