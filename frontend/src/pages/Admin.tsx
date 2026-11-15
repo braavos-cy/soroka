@@ -60,17 +60,17 @@ function Connectors() {
     <div className="col" style={{ gap: 16 }}>
       <div className="row" style={{ alignItems: 'stretch' }}>
         {conns.map((c) => (
-          <div key={c.platform} className="card col" style={{ minWidth: 300 }}>
-            <div className="row"><h3 style={{ margin: 0 }}>{c.platform === 'whatsapp' ? 'WhatsApp' : 'Telegram'}</h3><span className="spacer" /><span className={'tier ' + (statusColor[c.status] || 'none')}>{c.status}</span></div>
+          <div key={c.platform} className="card col conn-card">
+            <div className="row"><h3 style={{ margin: 0 }}>{c.platform === 'whatsapp' ? 'WhatsApp' : 'Telegram'}</h3><span className="spacer" /><span className={'tier ' + (statusColor[c.status] || 'none')}>{t('conn_' + c.status).startsWith('conn_') ? c.status : t('conn_' + c.status)}</span></div>
             {c.self_id && <div className="small">{c.self_name} {c.self_id}</div>}
             {c.detail && <div className="small muted">{c.detail}</div>}
             <div className="small muted">{t('last_seen')}: {fmtDate(c.last_seen_at, true) || '—'}</div>
             {c.qr && <><div className="small">{t('scan_qr')}</div><QR value={c.qr} size={260} /></>}
-            {c.platform === 'whatsapp' && c.status !== 'offline' && <button onClick={() => relink(c.platform)}>{t('relink')}</button>}
+            {c.platform === 'whatsapp' && c.status !== 'offline' && <button style={{ alignSelf: 'flex-start' }} onClick={() => relink(c.platform)}>{t('relink')}</button>}
             {c.platform === 'telegram' && c.status === 'offline' && <div className="small muted">Phase 2</div>}
           </div>
         ))}
-        <div className="card col" style={{ minWidth: 300 }}>
+        <div className="card col conn-card">
           <h3 style={{ margin: 0 }}>{t('registration_code')}</h3>
           <div className="small muted">{t('registration_code_help')}</div>
           {code ? (
@@ -79,7 +79,7 @@ function Connectors() {
               <div className="small icon-text">{code.used ? <><CheckCircle2 size={14} className="ok-text" /> {code.used}</> : <><Loader2 size={14} className="spin" /> {t('waiting')}</>}</div>
               <button onClick={() => setCode(null)}>{t('close')}</button>
             </>
-          ) : <button onClick={async () => setCode(await api('/api/admin/registration-codes', { body: { platform: 'whatsapp' } }))}>{t('new_code')} (WhatsApp)</button>}
+          ) : <button style={{ alignSelf: 'flex-start' }} onClick={async () => setCode(await api('/api/admin/registration-codes', { body: { platform: 'whatsapp' } }))}>{t('new_code')} (WhatsApp)</button>}
         </div>
       </div>
       <div className="card">

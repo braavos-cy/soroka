@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Folder as FolderIcon, FolderInput, FolderX, Plus, X } from 'lucide-react'
+import { CalendarDays, FileText, Folder as FolderIcon, FolderInput, FolderX, Loader2, Plus, X } from 'lucide-react'
 import { api } from '../api'
 import { useT } from '../i18n'
 import { folderTree, useStore } from '../store'
@@ -57,7 +57,7 @@ export function TagChips({ ids, onRemove, singleLine }: { ids: number[]; onRemov
     <span key={tg.id} className="chip"><span className="dot" style={{ background: tg.color }} />{tg.name}
       {onRemove && <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(tg.id) }}><X size={12} /></button>}</span>
   ))
-  if (!singleLine) return <span className="row" style={{ gap: 4 }}>{chips}</span>
+  if (!singleLine) return chips.length ? <span className="row" style={{ gap: 4 }}>{chips}</span> : null
   return (
     <div ref={ref} className={'chips-line' + (overflow ? ' scrolling' : '')} onClick={(e) => overflow && e.stopPropagation()}>{chips}</div>
   )
@@ -92,7 +92,7 @@ export function TierBadge({ tier, status }: { tier: string | null; status?: stri
   if (status && ['queued', 'processing', 'stopped', 'excluded'].includes(status)) return <span className="tier proc">{t(status)}</span>
   if (status === 'error') return <span className="tier low">{t('error')}</span>
   if (status === 'infected') return <span className="tier low">{t('infected')}</span>
-  if (!tier) return <span className="tier none">—</span>
+  if (!tier) return <span className="tier-empty">—</span>
   return <span className={'tier ' + tier}>{t('tier_' + tier)}</span>
 }
 
@@ -159,4 +159,56 @@ export function FileName({ name, className }: { name: string; className?: string
     return () => ro.disconnect()
   }, [n])
   return <span ref={ref} className={'file-name' + (className ? ' ' + className : '')} title={n}>{text}</span>
+}
+
+/** Compact date field: shows the date (or a short placeholder) instead of the browser's wide empty mm/dd/yyyy box.
+ *  The native input lies invisibly on top, so a tap / click opens the platform's date picker; × clears. */
+export function DateInput({ value, onChange, placeholder, title }: { value: string; onChange: (v: string) => void; placeholder: string; title?: string }) {
+  const { t } = useT()
+  const shown = value ? new Date(value + 'T00:00:00').toLocaleDateString() : placeholder
+  return (
+    <span className={'date-in' + (value ? ' has' : '')} title={title}>
+      <CalendarDays size={14} className="date-icon" />
+      <span className="date-txt">{shown}</span>
+      <input type="date" value={value} aria-label={title || placeholder} onChange={(e) => onChange(e.target.value)}
+        onClick={(e) => { try { (e.currentTarget as any).showPicker?.() } catch { /* not allowed: the native field still works */ } }} />
+      {value && <button type="button" className="date-clear" title={t('clear_date')} onClick={() => onChange('')}><X size={12} /></button>}
+    </span>
+  )
+}
+
+/** "Label  [from] – [to]" */
+export function DateRange({ label, from, to, onFrom, onTo }: { label: string; from: string; to: string; onFrom: (v: string) => void; onTo: (v: string) => void }) {
+  const { t } = useT()
+  return (
+    <span className="date-range">
+      <span className="dr-label">{label}</span>
+      <DateInput value={from} onChange={onFrom} placeholder={t('date_from_ph')} title={`${label}: ${t('date_from_ph')}`} />
+      <span className="muted">–</span>
+      <DateInput value={to} onChange={onTo} placeholder={t('date_to_ph')} title={`${label}: ${t('date_to_ph')}`} />
+    </span>
+  )
+}
+
+const BUSY = ['queued', 'processing']
+
+/** A page thumbnail. `v` is the thumbnail's version (null = none rendered yet). While the page is (re)processed the
+ *  last thumbnail stays visible with a spinner on top; with no thumbnail yet a placeholder says what is going on. */
+export function PageThumb({ pageId, v, status }: { pageId: number | null | undefined; v: string | null | undefined; status?: string }) {
+  const { t } = useT()
+  const [err, setErr] = useState(false)
+  useEffect(() => setErr(false), [pageId, v])
+  const busy = !!status && BUSY.includes(status)
+  if (pageId && v && !err) return (
+    <>
+      <img loading="lazy" src={`/api/pages/${pageId}/image?variant=thumb&v=${v}`} alt="" draggable={false} onError={() => setErr(true)} />
+      {busy && <span className="thumb-busy"><Loader2 size={18} className="spin" /></span>}
+    </>
+  )
+  return (
+    <span className="thumb-ph">
+      {busy ? <Loader2 size={22} className="spin" /> : <FileText size={22} />}
+      <span className="small">{busy ? t('page_processing') : status === 'error' ? t('error') : ''}</span>
+    </span>
+  )
 }

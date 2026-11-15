@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { LogOut, Settings } from 'lucide-react'
 import { api } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
@@ -40,8 +42,13 @@ export default function AccountPage() {
   return (
     <div className="page-pad">
       <div className="account-head">
-        <h1>{user.name || user.email}</h1>
-        <div className="muted">{user.name ? user.email + ' · ' : ''}{t('role_' + user.role)}</div>
+        <div className="acc-who">
+          <h1>{user.name || user.email}</h1>
+          <div className="muted">{user.name ? user.email + ' · ' : ''}{t('role_' + user.role)}</div>
+        </div>
+        {/* on phones the admin section is not in the tab bar */}
+        {user.role === 'admin' && <Link to="/admin" className="btn-like acc-admin"><Settings size={15} /> {t('admin')}</Link>}
+        <button onClick={async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); location.assign('/') }}><LogOut size={15} /> {t('logout')}</button>
       </div>
       <div className="account-grid">
           <div className="card col acc-lang" ref={row1}>

@@ -35,26 +35,32 @@ def _date(s: str | None) -> datetime | None:
     return datetime.fromisoformat(s) if s else None
 
 
-def doc_summary(d: m.Document, first_page: int | None = None, snippet: str | None = None) -> dict:
+def thumb_version(pg: m.Page | None) -> str | None:
+    """Cache key of a page's current thumbnail (changes whenever it is re-rendered); None = no thumbnail yet."""
+    return pg.thumb_key.rsplit("-", 1)[-1] if pg is not None and pg.thumb_key else None
+
+
+def doc_summary(d: m.Document, first_page: int | None = None, thumb_v: str | None = None,
+                snippet: str | None = None) -> dict:
     ev = d.ingest_event
     return {"id": d.id, "title": d.title, "folder_id": d.folder_id, "status": d.status, "tier": d.tier,
             "needs_review": d.needs_review, "page_count": d.page_count, "received_at": d.received_at,
             "document_date": d.document_date, "source": d.source_platform, "file_type": d.file_type,
             "language": d.language, "tags": [t.id for t in d.tags], "trashed_at": d.trashed_at,
-            "first_page_id": first_page, "snippet": snippet,
+            "first_page_id": first_page, "thumb_v": thumb_v, "snippet": snippet,
             "sender": (ev.sender_name or ev.sender_phone or ev.sender_email) if ev else "",
             "chat": ev.chat_name if ev else ""}
 
 
-def first_pages(db: DB, docs: list[m.Document]) -> dict[int, int]:
+def first_pages(db: DB, docs: list[m.Document]) -> dict[int, tuple[int, str | None]]:
+    """document id -> (first page id, its thumbnail version)."""
     vids = [d.current_version_id for d in docs if d.current_version_id]
     if not vids:
         return {}
-    out = {}
-    for v in db.query(m.DocumentVersion).filter(m.DocumentVersion.id.in_(vids)).all():
-        if v.page_ids:
-            out[v.document_id] = v.page_ids[0]
-    return out
+    first = {v.document_id: v.page_ids[0] for v in db.query(m.DocumentVersion).filter(m.DocumentVersion.id.in_(vids)).all()
+             if v.page_ids}
+    thumbs = dict(db.query(m.Page.id, m.Page.thumb_key).filter(m.Page.id.in_(list(first.values()))).all()) if first else {}
+    return {d: (pid, thumbs[pid].rsplit("-", 1)[-1] if thumbs.get(pid) else None) for d, pid in first.items()}
 
 
 @router.get("/documents")
@@ -130,7 +136,7 @@ def list_documents(
                 .offset(offset).limit(limit).all()]
     fp = first_pages(db, [d for d, _ in docs])
     return {"total": total, "terms": terms,
-            "items": [doc_summary(d, fp.get(d.id), s) for d, s in docs]}
+            "items": [doc_summary(d, *fp.get(d.id, (None, None)), snippet=s) for d, s in docs]}
 
 
 def page_summary(p: m.Page) -> dict:
@@ -138,7 +144,7 @@ def page_summary(p: m.Page) -> dict:
             "width": p.width, "height": p.height, "language": p.language, "error": p.error[:500] if p.error else "",
             "rendered": p.rendered_recipe_id == p.current_recipe_id and p.render_key is not None,
             "stages": {k: {"status": v.get("status"), "tier": v.get("tier")} for k, v in (p.stages or {}).items()},
-            "filename": p.file.filename if p.file else "", "updated_at": p.updated_at}
+            "filename": p.file.filename if p.file else "", "updated_at": p.updated_at, "thumb_v": thumb_version(p)}
 
 
 def _get_doc(db: DB, doc_id: int) -> m.Document:
@@ -157,7 +163,7 @@ def get_document(doc_id: int, p: Principal = Depends(ui_user), db: DB = Depends(
     files = db.query(m.FileOriginal).filter(m.FileOriginal.id.in_(d.source_file_ids or [-1])).all()
     versions = db.query(m.DocumentVersion).filter_by(document_id=d.id).order_by(m.DocumentVersion.number).all()
     rej = db.query(m.RejectedItem).filter_by(document_id=d.id).one_or_none()
-    out = doc_summary(d, ids[0] if ids else None)
+    out = doc_summary(d, ids[0] if ids else None, thumb_version(pages.get(ids[0])) if ids else None)
     out.update({
         "status_detail": d.status_detail, "has_pdf": bool(d.pdf_key),
         "pages": [page_summary(pages[i]) for i in ids if i in pages],

@@ -13,7 +13,7 @@ import AccountPage from './pages/Account'
 import { ReauthModal } from './components/Reauth'
 import { DialogProvider } from './components/ui'
 import { UploadsProvider } from './components/uploads'
-import { PanelLeftClose, PanelLeftOpen, Bird, CircleUser, ListChecks, LogOut, Menu, Search, Settings, ShieldX, Trash2 } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Bird, CircleUser, Files, ListChecks, LogOut, Menu, Search, Settings, ShieldX, Trash2 } from 'lucide-react'
 
 export default function App() {
   const [lang, setLangState] = useState<Lang>(() => {
@@ -42,7 +42,7 @@ export default function App() {
 }
 
 function Shell({ onLogout }: { onLogout: () => void }) {
-  const { t, lang, setLang } = useT()
+  const { t } = useT()
   const { user, reviewCount, rejectedNew } = useStore()
   const nav = useNavigate()
   const [params] = useSearchParams()
@@ -83,16 +83,18 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           <Search size={15} className="search-icon" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('search')} type="search" />
         </form>
-        <nav>
-          <NavLink to="/review"><ListChecks size={16} /> <span className="lbl">{t('review')}</span>{reviewCount > 0 && <span className="badge">{reviewCount}</span>}</NavLink>
-          <NavLink to="/rejected"><ShieldX size={16} /> <span className="lbl">{t('rejected')}</span>{rejectedNew > 0 && <span className="badge">{rejectedNew}</span>}</NavLink>
-          <NavLink to="/trash"><Trash2 size={16} /> <span className="lbl">{t('trash')}</span></NavLink>
-          {user.role === 'admin' && <NavLink to="/admin"><Settings size={16} /> <span className="lbl">{t('admin')}</span></NavLink>}
-          <NavLink to="/account"><CircleUser size={16} /> <span className="lbl">{t('account')}</span></NavLink>
+        {/* desktop: sections in the top bar; phone (< 640px): a bottom tab bar with labels */}
+        <nav className="sections">
+          <NavLink to="/" title={t('nav_documents')} className={() => 'nav-docs' + (loc.pathname === '/' || loc.pathname.startsWith('/doc/') ? ' active' : '')}><Files size={16} /> <span className="lbl">{t('nav_documents')}</span></NavLink>
+          <NavLink to="/review" title={t('review')}><ListChecks size={16} /> <span className="lbl">{t('review')}</span>{reviewCount > 0 && <span className="badge">{reviewCount}</span>}</NavLink>
+          <NavLink to="/rejected" title={t('rejected')}><ShieldX size={16} /> <span className="lbl lbl-full">{t('rejected')}</span><span className="lbl lbl-short">{t('nav_rejected')}</span>{rejectedNew > 0 && <span className="badge">{rejectedNew}</span>}</NavLink>
+          <NavLink to="/trash" title={t('trash')}><Trash2 size={16} /> <span className="lbl">{t('trash')}</span></NavLink>
+          {user.role === 'admin' && <NavLink to="/admin" title={t('admin')} className="nav-admin"><Settings size={16} /> <span className="lbl">{t('admin')}</span></NavLink>}
+          <NavLink to="/account" title={t('account')}><CircleUser size={16} /> <span className="lbl">{t('account')}</span></NavLink>
         </nav>
         <span className="spacer" />
-        <button className="icon lang" title={t('language')} onClick={() => setLang(lang === 'ru' ? 'en' : 'ru')}>{lang === 'ru' ? 'EN' : 'RU'}</button>
-        <button className="icon" onClick={logout} title={t('logout')}><LogOut size={17} /></button>
+        {/* language is in Account → Preferences; on phones logging out is there too */}
+        <button className="icon logout-btn" onClick={logout} title={t('logout')}><LogOut size={17} /></button>
       </header>
       <div className="main" style={{ gridTemplateColumns: sideOpen ? `${sideW}px 1fr` : '1fr' }}>
         {sideOpen && (
