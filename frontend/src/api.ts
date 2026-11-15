@@ -46,6 +46,6 @@ export type User = { id: number; email: string; name: string; role: string; totp
 export type DocSummary = {
   id: number; title: string; folder_id: number; status: string; tier: string | null; needs_review: boolean
   page_count: number; received_at: string; document_date: string | null; source: string; file_type: string
-  language: string; tags: number[]; trashed_at: string | null; first_page_id: number | null; snippet: string | null
+  language: string; tags: number[]; trashed_at: string | null; first_page_id: number | null; thumb_v: string | null; snippet: string | null
   sender: string; chat: string
 }

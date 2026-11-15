@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { useT } from '../i18n'
+import { plural, useT } from '../i18n'
 import { useStore } from '../store'
 import { FileName, fmtDate, TierBadge } from '../components/Pickers'
-import { Check, FileX, PenSquare } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, FileX, PenSquare } from 'lucide-react'
 import { cropLabel, cropOptions } from '../components/cropOptions'
 
 type Item = { page_id: number; document_id: number; title: string; tier: string; page_no: number; received_at: string; flagged: { stage: string; tier: string; method: string }[] }
 
 export default function ReviewPage() {
-  const { t } = useT()
+  const { t, lang } = useT()
   const { reload, toast } = useStore()
   const nav = useNavigate()
   const [items, setItems] = useState<Item[]>([])
@@ -43,12 +43,12 @@ export default function ReviewPage() {
     <div>
       <div className="toolbar">
         <h2 style={{ margin: 0 }}>{t('review_queue')}</h2>
-        <span className="muted">{items.length} {t('pages').toLowerCase()}</span>
+        <span className="muted">{plural(t, lang, items.length, 'pl_pages')}</span>
         <span className="spacer" />
         <label className="inline"><input type="checkbox" checked={medium} onChange={(e) => setMedium(e.target.checked)} />{t('include_medium')}</label>
       </div>
       {items.length === 0 && <div className="page-pad muted">{t('queue_empty')}</div>}
-      <div className="review-grid">
+      {items.length > 0 && <div className="review-grid">
         <div className="review-list">
           {items.map((it, i) => (
             <div key={it.page_id} className={'item' + (i === idx ? ' sel' : '')} onClick={() => setIdx(i)}>
@@ -62,8 +62,14 @@ export default function ReviewPage() {
           ))}
         </div>
         {cur && detail && (
-          <div className="card col">
-            <div className="row">
+          <div className="card col review-card">
+            <div className="row review-nav">
+              <button className="icon" title={t('prev')} disabled={idx <= 0} onClick={() => setIdx(idx - 1)}><ChevronLeft size={18} /></button>
+              <span className="small muted">{idx + 1} / {items.length}</span>
+              <button className="icon" title={t('next')} disabled={idx >= items.length - 1} onClick={() => setIdx(idx + 1)}><ChevronRight size={18} /></button>
+              <FileName name={cur.title} className="strong" />
+            </div>
+            <div className="row review-actions">
               <button className="primary" onClick={() => act('accept')}><Check size={15} /> {t('accept')}</button>
               <button onClick={() => act('open')}><PenSquare size={15} /> {t('open_editor')}</button>
               <button className="danger" onClick={() => act('non_document')}><FileX size={15} /> {t('not_document')}</button>
@@ -88,7 +94,7 @@ export default function ReviewPage() {
             <div className="imgwrap" style={{ alignSelf: 'flex-start' }}><img src={detail.render_url} alt="" style={{ maxHeight: 520 }} /></div>
           </div>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

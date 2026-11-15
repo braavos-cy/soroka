@@ -19,7 +19,7 @@ const en = {
   file_type: 'File type', status: 'Status', review_status: 'Review', received: 'Received', doc_date: 'Document date',
   from: 'from', to: 'to', include_subfolders: 'incl. subfolders', any: 'any', needs_review: 'needs review',
   check: 'please check', ok: 'OK', processing: 'processing', queued: 'queued', stopped: 'stopped', excluded: 'not a document', ready: 'ready', error: 'error', infected: 'malware',
-  upload_title: 'Upload documents', drop_here: 'Drop files or folders here, or', choose_files: 'choose files', choose_folder: 'choose a folder',
+  upload_title: 'Upload documents', drop_here: 'Drop files or folders here', choose_files: 'choose files', choose_folder: 'choose a folder',
   target_folder: 'Folder', one_doc_per_file: 'One document per file', one_doc_all: 'One document from all files (pages)',
   bulk_low_priority: 'Bulk import (low priority)', uploading: 'Uploading…', up_pause: 'Pause', up_resume: 'Resume', up_cancel: 'Cancel upload', up_cancel_q: 'Cancel this upload?', up_cancel_many_q: 'Cancel the selected uploads?', up_cancel_msg: 'The part already sent is discarded. This cannot be undone.', up_queued: 'Waiting…', up_uploading: 'Uploading…', up_paused: 'Paused', up_saving: 'Saving…', up_error: 'Failed', up_count: 'uploading', up_filter: 'Upload', up_f_uploading: 'Uploading', up_f_paused: 'Paused', up_f_failed: 'Failed', up_filter_on: 'Showing uploads in progress only.', uploaded: 'Uploaded', duplicates: 'duplicates', files: 'files',
   pages: 'Pages', page: 'Page', pipeline: 'Pipeline', info: 'Info', text: 'Text', download: 'Download', original: 'Original',
@@ -83,6 +83,12 @@ const en = {
   layout_grid: 'Grid', layout_list: 'List', load_more: 'Load more', full_page: 'Whole image', auto: 'Auto',
   relink_confirm: 'The bot will be logged out of WhatsApp and a new QR code will be shown.', waiting: 'Waiting…', edit: 'Edit',
   create_tag: 'Create tag «{name}»', find_or_create_tag: 'Find or create a tag…', type_to_create_tag: 'Type a name to create a tag', reset_2fa_confirm: 'The user will be logged out and must set up two-factor authentication again at the next login.', tag_max_length: 'Max. tag length (characters)', err_tag_too_long: 'The tag name is too long', hide_sidebar: 'Hide sidebar', show_sidebar: 'Show sidebar', resize_sidebar: 'Drag to resize, double-click to reset', preferences: 'Preferences', pref_include_subfolders: 'Show documents from subfolders', pref_include_subfolders_hint: 'When a folder is selected, also list the documents in its subfolders.', role_user: 'User', role_admin: 'Administrator', token_name_hint: 'e.g. Chrome laptop',
+  pl_docs: 'document|documents', pl_pages: 'page|pages', pl_files: 'file|files',
+  sel_move: 'Move to…', sel_tag_add: 'Add tag', sel_tag_remove: 'Remove tag', sel_zip: 'Download ZIP',
+  reset_filters: 'Reset filters', choose_files_btn: 'Choose files', choose_folder_btn: 'Choose folder', take_photo: 'Take photo',
+  more_actions: 'More actions', page_processing: 'Processing…', conn_connected: 'connected', conn_qr: 'waiting for QR scan',
+  conn_offline: 'offline', conn_disconnected: 'disconnected', conn_logged_out: 'logged out', prev: 'Previous', next: 'Next',
+  nav_documents: 'Documents', nav_rejected: 'Rejected', date_from_ph: 'from', date_to_ph: 'to', clear_date: 'Clear date', pick_date: 'Pick a date',
 }
 type Key = keyof typeof en
 
@@ -105,7 +111,7 @@ const ru: Partial<Record<Key, string>> = {
   file_type: 'Тип файла', status: 'Статус', review_status: 'Проверка', received: 'Получен', doc_date: 'Дата документа',
   from: 'с', to: 'по', include_subfolders: 'с подпапками', any: 'любой', needs_review: 'требует проверки',
   check: 'проверить', ok: 'OK', processing: 'обработка', queued: 'в очереди', stopped: 'остановлено', excluded: 'не документ', ready: 'готов', error: 'ошибка', infected: 'вредоносный',
-  upload_title: 'Загрузка документов', drop_here: 'Перетащите файлы или папки сюда, или', choose_files: 'выберите файлы', choose_folder: 'выберите папку',
+  upload_title: 'Загрузка документов', drop_here: 'Перетащите файлы или папки сюда', choose_files: 'выберите файлы', choose_folder: 'выберите папку',
   target_folder: 'Папка', one_doc_per_file: 'Отдельный документ на каждый файл', one_doc_all: 'Один документ из всех файлов (страницы)',
   bulk_low_priority: 'Массовый импорт (низкий приоритет)', uploading: 'Загрузка…', up_pause: 'Пауза', up_resume: 'Продолжить', up_cancel: 'Отменить загрузку', up_cancel_q: 'Отменить эту загрузку?', up_cancel_many_q: 'Отменить выбранные загрузки?', up_cancel_msg: 'Уже отправленная часть будет удалена. Это нельзя отменить.', up_queued: 'В очереди…', up_uploading: 'Загрузка…', up_paused: 'На паузе', up_saving: 'Сохранение…', up_error: 'Ошибка', up_count: 'загружается', up_filter: 'Загрузка', up_f_uploading: 'Загружаются', up_f_paused: 'На паузе', up_f_failed: 'С ошибкой', up_filter_on: 'Показаны только незавершённые загрузки.', uploaded: 'Загружено', duplicates: 'дубликаты', files: 'файлов',
   pages: 'Страницы', page: 'Стр.', pipeline: 'Обработка', info: 'Сведения', text: 'Текст', download: 'Скачать', original: 'Оригинал',
@@ -169,6 +175,12 @@ const ru: Partial<Record<Key, string>> = {
   layout_grid: 'Плитка', layout_list: 'Список', load_more: 'Показать ещё', full_page: 'Всё изображение', auto: 'Авто',
   relink_confirm: 'Бот выйдет из WhatsApp, и появится новый QR-код.', waiting: 'Ожидание…', edit: 'Изменить',
   create_tag: 'Создать тег «{name}»', find_or_create_tag: 'Найти или создать тег…', type_to_create_tag: 'Введите название, чтобы создать тег', reset_2fa_confirm: 'Пользователь будет разлогинен и при следующем входе должен заново настроить двухфакторную аутентификацию.', tag_max_length: 'Макс. длина тега (символов)', err_tag_too_long: 'Слишком длинное название тега', hide_sidebar: 'Скрыть панель', show_sidebar: 'Показать панель', resize_sidebar: 'Перетащите для изменения ширины, двойной клик — сброс', preferences: 'Настройки', pref_include_subfolders: 'Показывать документы из подпапок', pref_include_subfolders_hint: 'При выборе папки показывать также документы из её подпапок.', role_user: 'Пользователь', role_admin: 'Администратор', token_name_hint: 'например, ноутбук Chrome',
+  pl_docs: 'документ|документа|документов', pl_pages: 'страница|страницы|страниц', pl_files: 'файл|файла|файлов',
+  sel_move: 'В папку…', sel_tag_add: 'Добавить тег', sel_tag_remove: 'Убрать тег', sel_zip: 'Скачать ZIP',
+  reset_filters: 'Сбросить фильтры', choose_files_btn: 'Выбрать файлы', choose_folder_btn: 'Выбрать папку', take_photo: 'Сфотографировать',
+  more_actions: 'Другие действия', page_processing: 'Обработка…', conn_connected: 'подключён', conn_qr: 'ждёт сканирования QR',
+  conn_offline: 'офлайн', conn_disconnected: 'отключён', conn_logged_out: 'вышел', prev: 'Предыдущая', next: 'Следующая',
+  nav_documents: 'Документы', nav_rejected: 'Отклонено', date_from_ph: 'с', date_to_ph: 'по', clear_date: 'Очистить дату', pick_date: 'Выбрать дату',
 }
 
 export type Lang = 'ru' | 'en'
@@ -184,6 +196,13 @@ export function errText(t: T, detail: string): string {
   const rule = t('pw_rule_' + detail)
   if (rule !== 'pw_rule_' + detail) return t('err_password_policy') + ' ' + rule
   return detail
+}
+/** "3 documents"; Russian: 1 документ, 2–4 документа, 5+ документов (11–14 → документов). Forms in `key` are '|'-separated. */
+export function plural(t: T, lang: Lang, n: number, key: string): string {
+  const f = t(key).split('|')
+  if (lang !== 'ru' || f.length < 3) return `${n} ${n === 1 ? f[0] : f[1] ?? f[0]}`
+  const m10 = n % 10, m100 = n % 100
+  return `${n} ${m10 === 1 && m100 !== 11 ? f[0] : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? f[1] : f[2]}`
 }
 export const LangCtx = createContext<{ lang: Lang; t: T; setLang: (l: Lang) => void }>({ lang: 'ru', t: makeT('ru'), setLang: () => {} })
 export const useT = () => useContext(LangCtx)

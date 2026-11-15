@@ -3,10 +3,10 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
-import { FolderSelect, fmtBytes, fmtDate, TagAdder, TagChips, TierBadge } from '../components/Pickers'
+import { DateInput, FolderSelect, fmtBytes, fmtDate, PageThumb, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Menu, Select, useDialog } from '../components/ui'
 import { CropEditor, MeshEditor } from '../components/PageEditors'
-import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, Eye, Grid3x3, History, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
+import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, Eye, Grid3x3, History, Loader2, MoreHorizontal, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
 
 const STAGES = ['quality', 'acceptance', 'crop', 'dewarp', 'orientation', 'deskew', 'cleanup', 'ocr', 'layout', 'consistency', 'outputs']
 type Pt = [number, number]
@@ -60,49 +60,68 @@ export default function DocumentView() {
 
   if (!doc) return <div className="page-pad muted">{t('loading')}</div>
   const trashed = !!doc.trashed_at
+  const isAdmin = user.role === 'admin'
+  const toTrash = () => {
+    // leave at once; the server stops the processing in the background of this page change
+    api('/api/documents/bulk', { body: { ids: [doc.id], action: 'trash' } })
+      .then(() => { reloadStore(); window.dispatchEvent(new Event('soroka:reload')) }).catch((e) => toast(e.detail))
+    goBack()
+  }
+  const restore = async () => { await api('/api/documents/bulk', { body: { ids: [doc.id], action: 'restore' } }); loadDoc(); reloadStore() }
+  const purge = async () => {
+    if (!(await dlg.confirm({ title: t('purge') + '?', message: t('confirm_purge'), ok: t('purge'), danger: true }))) return
+    api(`/api/documents/${doc.id}`, { method: 'DELETE' })
+      .then(() => { reloadStore(); window.dispatchEvent(new Event('soroka:reload')) }).catch((e) => toast(e.detail))
+    goBack()
+  }
+  // rarely used / destructive actions live in the "…" menu
+  const more = [
+    ...(!trashed ? [{ key: 'reprocess', label: t('reprocess'), icon: <RefreshCw size={14} /> }] : []),
+    ...(trashed ? [] : [{ key: 'trash', label: t('to_trash'), icon: <Trash2 size={14} />, danger: true }]),
+    ...(isAdmin && (trashed || doc.status === 'rejected') ? [{ key: 'purge', label: t('purge'), icon: <Trash2 size={14} />, danger: true }] : []),
+  ]
+  const onMore = (k: string) => {
+    if (k === 'reprocess') post(`/api/documents/${doc.id}/reprocess`)
+    if (k === 'trash') toTrash()
+    if (k === 'purge') purge()
+  }
+  const multi = doc.pages.length > 1
   return (
-    <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', height: '100%' }}>
+    <div className="doc-view">
+      {/* row 1: back, title, actions; row 2: what the document is (status, folder, date, tags) */}
       <div className="doc-head">
-        <button className="icon" onClick={goBack} title={t('back')}><ArrowLeft size={18} /></button>
-        <input className="title-input" defaultValue={doc.title} key={doc.title} onBlur={(e) => e.target.value !== doc.title && patch({ title: e.target.value })} />
-        <TierBadge tier={doc.needs_review ? 'low' : doc.tier} status={doc.status} />
-        <FolderSelect value={doc.folder_id} allowEmpty onChange={(f) => patch(f ? { folder_id: f } : { clear_folder: true })} />
-        <input type="date" title={t('doc_date')} value={doc.document_date ? doc.document_date.slice(0, 10) : ''}
-          onChange={(e) => patch(e.target.value ? { document_date: e.target.value } : { clear_date: true })} />
-        <TagChips ids={doc.tags} onRemove={(tid) => patch({ tag_ids: doc.tags.filter((x: number) => x !== tid) })} />
-        <TagAdder exclude={doc.tags} onAdd={(tid) => patch({ tag_ids: [...doc.tags, tid] })} />
-        <span className="spacer" />
-        <Menu icon={<Download size={15} />} label={t('download')} align="right"
-          items={[...(doc.has_pdf ? [{ key: 'pdf', label: t('processed_pdf') }] : []), { key: 'original', label: t('original') }, { key: 'text', label: t('plain_text') }]}
-          onSelect={(k) => window.open(`/api/documents/${doc.id}/download?kind=${k}`, '_blank')} />
-        {doc.status === 'rejected' && <button className="primary" onClick={() => post(`/api/documents/${doc.id}/rescue`)}>{t('rescue')}</button>}
-        {!trashed && <button title={t('reprocess')} onClick={() => post(`/api/documents/${doc.id}/reprocess`)}><RefreshCw size={15} /></button>}
-        {!trashed && <button className="danger" title={t('to_trash')} onClick={() => {
-          // leave at once; the server stops the processing in the background of this page change
-          api('/api/documents/bulk', { body: { ids: [doc.id], action: 'trash' } })
-            .then(() => { reloadStore(); window.dispatchEvent(new Event('soroka:reload')) }).catch((e) => toast(e.detail))
-          goBack()
-        }}><Trash2 size={15} /></button>}
-        {trashed && <button onClick={async () => { await api('/api/documents/bulk', { body: { ids: [doc.id], action: 'restore' } }); loadDoc(); reloadStore() }}><ArchiveRestore size={15} /> {t('restore')}</button>}
-        {user.role === 'admin' && (trashed || doc.status === 'rejected') && <button className="danger" onClick={async () => { if (await dlg.confirm({ title: t('purge') + '?', message: t('confirm_purge'), ok: t('purge'), danger: true })) {
-          api(`/api/documents/${doc.id}`, { method: 'DELETE' })
-            .then(() => { reloadStore(); window.dispatchEvent(new Event('soroka:reload')) }).catch((e) => toast(e.detail))
-          goBack()
-        } }}>{t('purge')}</button>}
+        <div className="dh-row">
+          <button className="icon" onClick={goBack} title={t('back')}><ArrowLeft size={18} /></button>
+          <input className="title-input" defaultValue={doc.title} key={doc.title} title={doc.title} onBlur={(e) => e.target.value !== doc.title && patch({ title: e.target.value })} />
+          {doc.status === 'rejected' && <button className="primary" onClick={() => post(`/api/documents/${doc.id}/rescue`)}>{t('rescue')}</button>}
+          {trashed && <button onClick={restore}><ArchiveRestore size={15} /> <span className="lbl-phone-hide">{t('restore')}</span></button>}
+          <Menu icon={<Download size={15} />} label={t('download')} align="right" className="dl-btn" title={t('download')}
+            items={[...(doc.has_pdf ? [{ key: 'pdf', label: t('processed_pdf') }] : []), { key: 'original', label: t('original') }, { key: 'text', label: t('plain_text') }]}
+            onSelect={(k) => window.open(`/api/documents/${doc.id}/download?kind=${k}`, '_blank')} />
+          {more.length > 0 && <Menu icon={<MoreHorizontal size={16} />} caret={false} align="right" title={t('more_actions')} items={more} onSelect={onMore} />}
+        </div>
+        <div className="dh-meta">
+          <TierBadge tier={doc.needs_review ? 'low' : doc.tier} status={doc.status} />
+          <FolderSelect value={doc.folder_id} allowEmpty onChange={(f) => patch(f ? { folder_id: f } : { clear_folder: true })} />
+          <DateInput value={doc.document_date ? doc.document_date.slice(0, 10) : ''} placeholder={t('doc_date')} title={t('doc_date')}
+            onChange={(v) => patch(v ? { document_date: v } : { clear_date: true })} />
+          <TagChips ids={doc.tags} onRemove={(tid) => patch({ tag_ids: doc.tags.filter((x: number) => x !== tid) })} />
+          <TagAdder exclude={doc.tags} onAdd={(tid) => patch({ tag_ids: [...doc.tags, tid] })} />
+        </div>
       </div>
-      <div className="viewer">
-        <div className="thumbs">
+      <div className={'viewer' + (multi ? '' : ' single')}>
+        {/* page strip only for documents with several pages */}
+        {multi && <div className="thumbs">
           {doc.pages.map((p: any, i: number) => (
-            <div key={p.id} className={'th' + (i === pageIdx ? ' sel' : '')} onClick={() => setPageIdx(i)}>
-              {p.status === 'ready' ? <img src={`/api/pages/${p.id}/image?variant=thumb&v=${p.updated_at}`} alt="" /> : <div className="muted small" style={{ padding: 20 }}>{t(p.status)}</div>}
-              <div className="small row" style={{ justifyContent: 'center', gap: 4 }}>{i + 1} <TierBadge tier={p.reviewed ? 'high' : p.tier} status={p.status} /></div>
+            <div key={p.id} className={'th' + (i === pageIdx ? ' sel' : '')} onClick={() => setPageIdx(i)} title={`${t('page')} ${i + 1}`}>
+              <div className="th-img"><PageThumb pageId={p.id} v={p.thumb_v} status={p.status} /></div>
+              <div className="th-foot"><span>{i + 1}</span><TierBadge tier={p.reviewed ? 'high' : p.tier} status={p.status} /></div>
             </div>
           ))}
-          {doc.pages.length === 0 && <div className="muted small">{doc.status_detail || t('not_ready')}</div>}
-        </div>
+        </div>}
         <div className="stage-area">
           {page ? <PageCanvas page={page} q={q} mode={mode} preview={preview} edit={(stage: string, v: any, reset?: boolean) => { edit(stage, v, reset); setMode('result') }} onCancelEdit={() => setMode('result')} />
-            : <div className="muted">{doc.pages.length ? t('loading') : (doc.status_detail || t('not_ready'))}</div>}
+            : <div className="muted stage-msg">{doc.pages.length ? t('loading') : <><Loader2 size={16} className="spin" /> {doc.status_detail || t('not_ready')}</>}</div>}
         </div>
         <div className="side">
           <div className="tabs">
@@ -140,7 +159,7 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
   if (mode === 'crop' && page.original_url) return <CropEditor page={page} onApply={(v) => edit('crop', v)} onCancel={onCancelEdit} />
   if (mode === 'mesh' && page.flatten_source_url) return <MeshEditor page={page} onApply={(mesh) => edit('dewarp', { mesh })}
     onReset={() => edit('dewarp', { mesh: null })} onCancel={onCancelEdit} />
-  if (!page.render_key && !page.rendered && page.status !== 'ready') return <div className="muted">{t('not_ready')}</div>
+  if (!page.render_key && !page.rendered && page.status !== 'ready') return <div className="muted stage-msg"><Loader2 size={16} className="spin" /> {t('not_ready')}</div>
   const tf = preview && !comparing ? `rotate(${(preview.rotate || 0) - (preview.deskew || 0)}deg)` : undefined
   // hold "Original" to see the unmodified page in place of the result
   const hold = (on: boolean) => (e: React.PointerEvent) => { e.preventDefault(); setComparing(on) }
@@ -162,7 +181,8 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
           {hits.map((w: any, i: number) => <rect key={i} className="hl" x={w.box[0] - 2} y={w.box[1] - 2} width={w.box[2] + 4} height={w.box[3] + 4} rx={3} />)}
         </svg>
       )}
-      {['queued', 'processing', 'stopped', 'excluded'].includes(page.status) && <div style={{ position: 'absolute', top: 8, right: 8 }}><span className="tier proc">{t(page.status)}</span></div>}
+      {['queued', 'processing'].includes(page.status) && <div className="canvas-busy"><Loader2 size={14} className="spin" /> {t(page.status)}</div>}
+      {['stopped', 'excluded'].includes(page.status) && <div className="canvas-busy">{t(page.status)}</div>}
     </div>
     </div>
   )
@@ -177,16 +197,17 @@ function PipelinePanel({ page, edit, post, setMode, mode, setPreview }: any) {
   const isImage = page.kind === 'image'
   const hist = page.history || []
   const curIdx = hist.findIndex((h: any) => h.current)
+  const busy = ['queued', 'processing'].includes(page.status)
   return (
     <div>
-      <div className="row" style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+      <div className="row pipe-head">
         <TierBadge tier={page.reviewed ? 'high' : page.tier} status={page.status} />
         {page.reviewed && <span className="small muted icon-text"><Check size={13} /> {t('reviewed')}</span>}
         <span className="spacer" />
-        <button title={t('undo')} disabled={curIdx <= 0} onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: hist[curIdx - 1].version })}><Undo2 size={15} /></button>
-        <button title={t('redo')} disabled={curIdx < 0 || curIdx >= hist.length - 1} onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: hist[curIdx + 1].version })}><Redo2 size={15} /></button>
-        {isImage && <button title={t('reset_auto')} onClick={() => post(`/api/pages/${page.id}/reset`)}><RotateCcw size={15} /> {t('auto')}</button>}
-        {!page.reviewed && <button title={t('mark_reviewed')} onClick={() => post(`/api/pages/${page.id}/review`, { action: 'accept' })}><CheckCheck size={15} /></button>}
+        <button title={t('undo')} disabled={busy || curIdx <= 0} onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: hist[curIdx - 1].version })}><Undo2 size={15} /></button>
+        <button title={t('redo')} disabled={busy || curIdx < 0 || curIdx >= hist.length - 1} onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: hist[curIdx + 1].version })}><Redo2 size={15} /></button>
+        {isImage && <button title={t('reset_auto')} disabled={busy} onClick={() => post(`/api/pages/${page.id}/reset`)}><RotateCcw size={15} /> {t('auto')}</button>}
+        {!page.reviewed && <button title={t('mark_reviewed')} disabled={busy} onClick={() => post(`/api/pages/${page.id}/review`, { action: 'accept' })}><CheckCheck size={15} /> {t('accept')}</button>}
       </div>
       {STAGES.map((s) => {
         const d = st[s] || {}
