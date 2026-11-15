@@ -181,6 +181,57 @@ def _looks_flat_scan(small: np.ndarray) -> float:
     return float(0.5 * light + 0.5 * uniform)
 
 
+def _quad_blank_border(img: np.ndarray) -> tuple[np.ndarray, dict] | None:
+    """A sheet smaller than the scanner glass: the scanner (or its software) fills the rest of the frame with
+    *pure* white (255, no noise at all), the paper itself is a touch darker (even 254). Invisible to edge and
+    contrast detectors, but exact: real paper is never perfectly saturated over a large area, and a born-digital
+    page has pure white paper too (nothing to tell apart -> no candidate). Returns (quad in full-res px, signals)."""
+    g = gray(img)
+    H, W = g.shape
+    k = max(4, round(max(H, W) / 400))  # density cell
+    h, w = H // k, W // k
+    if h < 40 or w < 40:
+        return None
+    # share of not-pure-white pixels per cell: high on paper (lower right around text, where scanners brighten),
+    # exactly 0 on the blank fill
+    dens = (g[:h * k, :w * k] < 255).reshape(h, k, w, k).mean(axis=(1, 3))
+    paper = (dens > 0.6).astype(np.uint8)
+    if not 0.12 < float(paper.mean()) < 0.93:
+        return None
+    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))  # text lines inside the page
+    paper = cv2.morphologyEx(paper, cv2.MORPH_OPEN, np.ones((7, 7), np.uint8))  # specks, marks in the blank area
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(paper, 8)
+    if n < 2:
+        return None
+    i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    comp = (lab == i).astype(np.uint8)
+    cnts, _ = cv2.findContours(comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    (cx, cy), (rw, rh), ang = cv2.minAreaRect(max(cnts, key=cv2.contourArea))
+    # contour points are cell indices: +1 cell in size, +0.5 in position = the outer edges of the cells
+    box = cv2.boxPoints(((cx + 0.5, cy + 0.5), (rw + 1, rh + 1), ang)).astype(np.float32)
+    inside = np.zeros_like(comp)
+    cv2.fillConvexPoly(inside, box.round().astype(np.int32), 1)
+    area = float(inside.sum())
+    if area < 0.15 * h * w or area > 0.93 * h * w:
+        return None
+    # the paper edge itself (half-covered cells, a scanner shadow line) belongs to neither side
+    din, dout = dens[inside > 0], dens[cv2.dilate(inside, np.ones((7, 7), np.uint8)) == 0]
+    if not dout.size:
+        return None
+    fill = float(din.mean())  # the rectangle is paper ...
+    solid = float((din > 0.95).mean())  # ... with large areas that have no pure white at all (not a digital page)
+    blank = 1.0 - float(dout.mean())  # the rest is pure white ...
+    busy = float((dout > 0.1).mean())  # ... with next to nothing in it (no text, no pictures)
+    sig = {"area": round(area / (h * w), 3), "paper_fill": round(fill, 3), "paper_solid": round(solid, 3),
+           "blank_outside": round(blank, 4), "busy_outside": round(busy, 4), "inout_contrast": 0.0}
+    if fill < 0.55 or solid < 0.35 or blank < 0.985 or busy < 0 or busy > 0.02:
+        return None
+    box = box * k
+    box[:, 0] = box[:, 0].clip(0, W - 1)
+    box[:, 1] = box[:, 1].clip(0, H - 1)
+    return order_quad(box), sig
+
+
 def _odd(n: int) -> int:
     return int(n) | 1
 
@@ -525,11 +576,17 @@ def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, d
     ff_score = (0.8 if clear < 0.7 else 0.7) if flat > 0.7 else (0.62 if best_quad < 0.6 else 0.3)
     cands.append(Candidate("full_frame", {"quad": full.round(1).tolist()}, ff_score, {"flat_scan": round(flat, 2)}))
 
+    # a small sheet on the scanner glass, surrounded by the scanner's pure-white fill: beats the full frame
+    if flat > 0.7:
+        bb = _quad_blank_border(img)
+        if bb is not None:
+            cands.append(Candidate("blank_border", {"quad": bb[0].round(1).tolist()}, 0.88, bb[1]))
+
     chosen = max(cands, key=lambda c: c.score)
     best_other = sorted((c.score for c in cands if c is not chosen), reverse=True)
     margin = chosen.score - (best_other[0] if best_other else 0)
     agreeing = len(chosen.signals.get("agree_with", []))
-    if chosen.score >= 0.75 and (margin > 0.1 or agreeing or chosen.method == "full_frame"):
+    if chosen.score >= 0.75 and (margin > 0.1 or agreeing or chosen.method in ("full_frame", "blank_border")):
         tier = "high"
     elif chosen.score >= 0.55:
         tier = "medium"
