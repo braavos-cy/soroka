@@ -163,7 +163,8 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .admin-tabs a:hover { color: var(--text); }
 .admin-tabs a.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
 .admin-tabs a.active svg { color: var(--accent); }
-.qr { background: #fff; padding: 8px; border-radius: 5px; display: inline-block; }
+.qr { background: #fff; border-radius: 5px; display: inline-block; max-width: 100%; align-self: flex-start; flex: none; line-height: 0; }
+.qr img { display: block; width: 100%; height: auto; aspect-ratio: 1; image-rendering: pixelated; }
 @media (max-width: 900px) {
   .main { grid-template-columns: 1fr !important; } .side-wrap, .topbar .side-toggle { display: none; }
   .viewer { grid-template-columns: 1fr; } .viewer .thumbs { flex-direction: row; overflow-x: auto; } .viewer .thumbs .th { width: 80px; flex: none; }
