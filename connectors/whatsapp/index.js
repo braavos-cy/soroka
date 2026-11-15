@@ -258,7 +258,10 @@ async function relink(reason) {
   log.warn({ reason }, 'relinking: clearing session')
   try { await sock?.logout() } catch {}
   try { sock?.end(undefined) } catch {}
-  fs.rmSync(AUTH_DIR, { recursive: true, force: true })
+  // AUTH_DIR is a volume mount point: the directory itself cannot be removed (EBUSY), only its contents
+  try {
+    for (const f of fs.readdirSync(AUTH_DIR)) fs.rmSync(`${AUTH_DIR}/${f}`, { recursive: true, force: true })
+  } catch (e) { if (e.code !== 'ENOENT') log.error({ err: e.message }, 'could not clear the session') }
   setState('disconnected', reason)
   setTimeout(start, 1000)
 }
