@@ -22,4 +22,5 @@ git reset -q --hard "$target"
 docker compose up -d --build --remove-orphans
 echo "$target" > "$STATE"
 docker image prune -f >/dev/null
+docker builder prune -f --filter until=168h >/dev/null   # build cache not used for a week
 echo "deployed $(git rev-parse --short "$target")"

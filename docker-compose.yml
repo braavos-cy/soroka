@@ -10,6 +10,8 @@ x-backend: &backend
     db: { condition: service_healthy }
     redis: { condition: service_started }
   restart: unless-stopped
+  # cap each backend container so one runaway job is killed alone instead of taking the whole server down
+  mem_limit: ${BACKEND_MEM_LIMIT:-5g}
 
 services:
   db:
