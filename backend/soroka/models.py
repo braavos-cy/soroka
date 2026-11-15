@@ -196,7 +196,7 @@ class Tag(Base):
     __tablename__ = "tag"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(300), unique=True)  # hierarchy via "finance/tax"
-    color: Mapped[str] = mapped_column(String(20), default="#64748b")
+    color: Mapped[str] = mapped_column(String(20), default="#7b8794")
     created_at: Mapped[datetime] = ts(default=now)
 
 

@@ -63,7 +63,7 @@ export function TagChips({ ids, onRemove, singleLine }: { ids: number[]; onRemov
   )
 }
 
-export const TAG_COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b']
+export const TAG_COLORS = ['#c2726b', '#c9a05f', '#6fa588', '#6d8fc4', '#9484c0', '#c283a3', '#6aa5a3', '#7b8794'] // muted; old bright ones were remapped in migration 0006
 export const randomTagColor = () => TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)]
 
 /** Tag action menu. Typing a name that does not exist offers to create the tag (unless noCreate). */
