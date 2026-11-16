@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react'
 
 const en = {
   app: 'Soroka', documents: 'Documents', review: 'Review', rejected: 'Rejected', trash: 'Trash', admin: 'Admin',
-  account: 'Account', logout: 'Log out', search: 'Search documents…', upload: 'Upload', all_documents: 'All documents',
+  account: 'Account', logout: 'Log out', search: 'Search documents…', upload: 'Upload', all_documents: 'All documents', not_in_folders: 'Not in folders',
   folders: 'Folders', tags: 'Tags', new_folder: 'New folder', new_subfolder: 'New subfolder', rename: 'Rename',
   delete: 'Delete', save: 'Save', cancel: 'Cancel', close: 'Close', apply: 'Apply', reset_auto: 'Reset to automatic',
   name: 'Name', color: 'Color', merge_into: 'Merge into…', manage_tags: 'Manage tags', new_tag: 'New tag',
@@ -106,7 +106,7 @@ type Key = keyof typeof en
 
 const ru: Partial<Record<Key, string>> = {
   app: 'Сорока', documents: 'Документы', review: 'Проверка', rejected: 'Отклонённые', trash: 'Корзина', admin: 'Админ',
-  account: 'Аккаунт', logout: 'Выйти', search: 'Поиск документов…', upload: 'Загрузить', all_documents: 'Все документы',
+  account: 'Аккаунт', logout: 'Выйти', search: 'Поиск документов…', upload: 'Загрузить', all_documents: 'Все документы', not_in_folders: 'Без папки',
   folders: 'Папки', tags: 'Теги', new_folder: 'Новая папка', new_subfolder: 'Новая подпапка', rename: 'Переименовать',
   delete: 'Удалить', save: 'Сохранить', cancel: 'Отмена', close: 'Закрыть', apply: 'Применить', reset_auto: 'Сбросить на автомат',
   name: 'Название', color: 'Цвет', merge_into: 'Объединить с…', manage_tags: 'Управление тегами', new_tag: 'Новый тег',

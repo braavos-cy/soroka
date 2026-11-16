@@ -66,7 +66,7 @@ def first_pages(db: DB, docs: list[m.Document]) -> dict[int, tuple[int, str | No
 
 @router.get("/documents")
 def list_documents(
-        q: str = "", folder_id: int | None = None, subfolders: bool = False,
+        q: str = "", folder_id: int | None = None, subfolders: bool = False, unfiled: bool = False,
         tags_all: str = "", tags_any: str = "", tags_not: str = "",
         source: str = "", file_type: str = "", language: str = "", status: str = "",
         review: str = "", sender: str = "", chat: str = "",
@@ -84,6 +84,8 @@ def list_documents(
     if folder_id is not None:
         ids = subtree_ids(db, folder_id) if subfolders else [folder_id]
         qry = qry.filter(m.Document.folder_id.in_(ids))
+    elif unfiled:  # "Not in folders": documents no folder holds
+        qry = qry.filter(m.Document.folder_id.is_(None))
     for t in _ids(tags_all):
         qry = qry.filter(exists().where(and_(m.DocumentTag.document_id == m.Document.id, m.DocumentTag.tag_id == t)))
     if any_ := _ids(tags_any):
@@ -248,6 +250,7 @@ class BulkIn(BaseModel):
     ids: list[int]
     action: str  # move | tag_add | tag_remove | trash | restore
     folder_id: int | None = None
+    unfile: bool = False  # move: out of every folder ("Not in folders") instead of into folder_id
     tag_ids: list[int] = []
 
 
@@ -270,10 +273,10 @@ def resume_processing(db: DB, d: m.Document) -> None:
 def bulk(body: BulkIn, request: Request, p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
     docs = db.query(m.Document).filter(m.Document.id.in_(body.ids or [-1])).all()
     if body.action == "move":
-        if body.folder_id is None or db.get(m.Folder, body.folder_id) is None:
+        if not body.unfile and (body.folder_id is None or db.get(m.Folder, body.folder_id) is None):
             raise HTTPException(400, "folder_required")
         for d in docs:
-            d.folder_id = body.folder_id
+            d.folder_id = None if body.unfile else body.folder_id
     elif body.action in ("tag_add", "tag_remove"):
         for d in docs:
             for t in body.tag_ids:
@@ -737,6 +740,8 @@ def stats(p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
                                                                   m.Document.trashed_at.is_(None),
                                                                   m.Document.status != "rejected").count(),
             "trash": db.query(m.Document).filter(m.Document.trashed_at.is_not(None)).count(),
+            "unfiled": db.query(m.Document).filter(m.Document.trashed_at.is_(None), m.Document.status != "rejected",
+                                                   m.Document.folder_id.is_(None)).count(),
             "rejected_new": _rejected_new(db, p.user),
             "tag_max_length": appsettings.get(db, "tag_max_length"),
             "version": _data_version(db),

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight, Folder as FolderIcon, FolderOpen, FolderPlus, Library, Merge, Minus, Pencil, Plus, Settings2, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Folder as FolderIcon, FolderOpen, FolderPlus, Inbox, Library, Merge, Minus, Pencil, Plus, Settings2, Trash2 } from 'lucide-react'
 import { api, Folder, Tag } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
@@ -34,7 +34,7 @@ function InlineEdit({ value, onCommit, onCancel, maxLength = 300 }: { value: str
 
 export default function Sidebar() {
   const { t } = useT()
-  const { folders, tags, reload, toast, tagMaxLen, docTotal } = useStore()
+  const { folders, tags, reload, toast, tagMaxLen, docTotal, unfiledTotal } = useStore()
   const dlg = useDialog()
   const [params] = useSearchParams()
   const nav = useNavigate()
@@ -43,7 +43,9 @@ export default function Sidebar() {
   const [editing, setEditing] = useState<number | null>(null)
   const [newTag, setNewTag] = useState(false)
   const [manage, setManage] = useState(false)
-  const sel = params.get('folder') ? Number(params.get('folder')) : null
+  // ?folder=none is "Not in folders"; otherwise a folder id, or nothing for All documents
+  const unfiled = params.get('folder') === 'none'
+  const sel = params.get('folder') && !unfiled ? Number(params.get('folder')) : null
   const children = useMemo(() => {
     const m = new Map<number | null, Folder[]>()
     folders.forEach((f) => { const k = f.parent_id; m.set(k, [...(m.get(k) || []), f]) })
@@ -75,7 +77,7 @@ export default function Sidebar() {
     nav(base + (qs ? '?' + qs : ''))
   }
   // folders (and All documents) always open the documents view
-  const selectFolder = (id: number | null) => go((p) => { id == null ? p.delete('folder') : p.set('folder', String(id)) }, false)
+  const selectFolder = (id: number | 'none' | null) => go((p) => { id == null ? p.delete('folder') : p.set('folder', String(id)) }, false)
   const onDocs = loc.pathname === '/'
 
   // create immediately with a unique default name, then edit the name in place
@@ -105,18 +107,24 @@ export default function Sidebar() {
     if (sel === f.id) selectFolder(null)
     reload(); window.dispatchEvent(new Event('soroka:reload'))
   }
-  const onDrop = async (e: React.DragEvent, target: number | null) => {
+  // target: a folder, null = All documents (folders dropped there go to the top level), 'none' = Not in folders
+  // (documents dropped there leave their folder)
+  const onDrop = async (e: React.DragEvent, target: number | 'none' | null) => {
     e.preventDefault(); (e.currentTarget as HTMLElement).classList.remove('drop')
     const raw = e.dataTransfer.getData(DND)
     if (!raw) return
     const d = JSON.parse(raw)
     try {
-      if (d.type === 'docs' && target != null) await api('/api/documents/bulk', { body: { ids: d.ids, action: 'move', folder_id: target } })
+      if (target === 'none') {
+        if (d.type !== 'docs') return
+        await api('/api/documents/bulk', { body: { ids: d.ids, action: 'move', unfile: true } })
+      }
+      else if (d.type === 'docs' && target != null) await api('/api/documents/bulk', { body: { ids: d.ids, action: 'move', folder_id: target } })
       if (d.type === 'folder' && d.id !== target) await api(`/api/folders/${d.id}`, { method: 'PATCH', body: { move: true, parent_id: target } })
       reload(); window.dispatchEvent(new Event('soroka:reload'))
     } catch (err: any) { toast(err.detail) }
   }
-  const dropProps = (target: number | null) => ({
+  const dropProps = (target: number | 'none' | null) => ({
     onDragOver: (e: React.DragEvent) => { e.preventDefault(); (e.currentTarget as HTMLElement).classList.add('drop') },
     onDragLeave: (e: React.DragEvent) => (e.currentTarget as HTMLElement).classList.remove('drop'),
     onDrop: (e: React.DragEvent) => onDrop(e, target),
@@ -172,8 +180,11 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="side-h"><span>{t('folders')}</span></div>
-      <div className={'tree-item' + (onDocs && sel == null ? ' sel' : '')} style={{ paddingLeft: 4 }} onClick={() => selectFolder(null)} {...dropProps(null)}>
+      <div className={'tree-item' + (onDocs && sel == null && !unfiled ? ' sel' : '')} style={{ paddingLeft: 4 }} onClick={() => selectFolder(null)} {...dropProps(null)}>
         <span className="caret" /><span className="ti-icon"><Library size={16} /></span><span className="name">{t('all_documents')}</span><span className="cnt">{docTotal || ''}</span>
+      </div>
+      <div className={'tree-item' + (onDocs && unfiled ? ' sel' : '')} style={{ paddingLeft: 4 }} onClick={() => selectFolder('none')} {...dropProps('none')}>
+        <span className="caret" /><span className="ti-icon"><Inbox size={16} /></span><span className="name">{t('not_in_folders')}</span><span className="cnt">{unfiledTotal || ''}</span>
       </div>
       <div className="side-sep" />
       {renderTree(null, 0)}

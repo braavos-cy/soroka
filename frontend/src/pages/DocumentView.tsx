@@ -32,7 +32,7 @@ export default function DocumentView() {
   // opened from search results; emptying the search box while here drops ?q= from the address
   const fromSearch = useRef(!!q)
   // where the document lives: its folder in the list, the trash, or the rejected list, with it highlighted
-  const showPlace = (opts?: { replace?: boolean }) => doc && nav(doc.trashed_at ? '/trash' : doc.status === 'rejected' ? '/rejected' : doc.folder_id ? `/?folder=${doc.folder_id}` : '/', { state: { highlight: doc.id }, ...opts })
+  const showPlace = (opts?: { replace?: boolean }) => doc && nav(doc.trashed_at ? '/trash' : doc.status === 'rejected' ? '/rejected' : doc.folder_id ? `/?folder=${doc.folder_id}` : '/?folder=none', { state: { highlight: doc.id }, ...opts })
   // back to where the document was opened from (list, folder, search, review); opened by direct link -> the list.
   // Opened from a search that has since been cleared: not back to the results, to where the document is.
   const goBack = () => {

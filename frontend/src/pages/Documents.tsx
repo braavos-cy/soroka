@@ -96,7 +96,8 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     const p = new URLSearchParams({ view, limit: String(limit) })
     const g = (k: string) => params.get(k) || ''
     if (g('q')) p.set('q', g('q'))
-    if (g('folder')) { p.set('folder_id', g('folder')); if (user.include_subfolders) p.set('subfolders', 'true') }
+    if (g('folder') === 'none') p.set('unfiled', 'true')
+    else if (g('folder')) { p.set('folder_id', g('folder')); if (user.include_subfolders) p.set('subfolders', 'true') }
     if (g('tags')) p.set(g('tag_mode') === 'or' ? 'tags_any' : 'tags_all', g('tags'))
     if (g('tags_not')) p.set('tags_not', g('tags_not'))
     for (const k of ['source', 'file_type', 'review', 'status', 'sender', 'chat', 'received_from', 'received_to', 'date_from', 'date_to', 'sort', 'language'])
@@ -203,7 +204,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   // uploads in progress: only in the main list, only those going to the folder shown; optional state filter
   const upFilter = params.get('upload') || ''
   const upVisible = view !== 'active' ? [] : uploads.tasks.filter((u) =>
-    (params.get('folder') ? u.folder === Number(params.get('folder')) : true) &&
+    (params.get('folder') === 'none' ? u.folder == null : params.get('folder') ? u.folder === Number(params.get('folder')) : true) &&
     (upFilter === 'uploading' ? ['queued', 'uploading', 'saving'].includes(u.state)
       : upFilter === 'paused' ? u.state === 'paused' : upFilter === 'failed' ? u.state === 'error' : true))
   const docsShown = upFilter ? [] : items  // the upload filters show uploads only
@@ -237,8 +238,9 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const selecting = sel.size + upSel.size > 0
   const activeFilters = FILTER_GROUPS.filter((g) => g.some((k) => params.get(k))).length
   const resetFilters = () => { const p = new URLSearchParams(params); FILTER_GROUPS.flat().forEach((k) => p.delete(k)); setParams(p) }
-  const folderId = params.get('folder') ? Number(params.get('folder')) : null
-  const heading = view === 'trash' ? t('trash') : view === 'rejected' ? t('rejected') : folderId ? folderPath(folders, folderId) : t('all_documents')
+  const unfiled = params.get('folder') === 'none' // "Not in folders"; uploads from here go to no folder (folderId null)
+  const folderId = params.get('folder') && !unfiled ? Number(params.get('folder')) : null
+  const heading = view === 'trash' ? t('trash') : view === 'rejected' ? t('rejected') : folderId ? folderPath(folders, folderId) : unfiled ? t('not_in_folders') : t('all_documents')
 
   // files dragged in from the computer and dropped anywhere on the list: uploaded into the folder shown (as the
   // dialog would with its defaults). Only files from outside: documents dragged within the page carry no 'Files'.
