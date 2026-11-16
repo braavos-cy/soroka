@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { api, setReauthHandler } from '../api'
 import { errText, useT } from '../i18n'
+import { TextInput } from './ui'
 
 export function ReauthModal() {
   const { t } = useT()
@@ -27,7 +28,7 @@ export function ReauthModal() {
         <label>{t('password')}</label>
         <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus autoComplete="current-password" />
         <label>{t('totp_code')}</label>
-        <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
+        <TextInput value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
         {err && <div className="err">{err}</div>}
         <div className="row"><span className="spacer" /><button type="button" onClick={() => finish(false)}>{t('cancel')}</button><button className="primary">{t('confirm')}</button></div>
       </form>

@@ -3,6 +3,7 @@ import { api } from '../api'
 import { errText, useT } from '../i18n'
 import { passwordRules } from '../password'
 import { QR } from '../components/Reauth'
+import { TextInput } from '../components/ui'
 import { Bird, Check, Circle, Eye, EyeOff, X } from 'lucide-react'
 
 export default function Login({ step, onDone }: { step: string; onDone: () => void }) {
@@ -44,7 +45,7 @@ export default function Login({ step, onDone }: { step: string; onDone: () => vo
         {cur === 'login' && (
           <form onSubmit={doLogin} className="col">
             <label>{t('email')}</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus autoComplete="username" />
+            <TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus autoComplete="username" />
             <label>{t('password')}</label>
             <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" />
             {err && <div className="err">{err}</div>}
@@ -54,7 +55,7 @@ export default function Login({ step, onDone }: { step: string; onDone: () => vo
         {cur === 'totp' && (
           <form onSubmit={doVerify} className="col">
             <label>{useRecovery ? t('recovery_code') : t('totp_code')}</label>
-            <input value={code} onChange={(e) => setCode(e.target.value)} autoFocus inputMode={useRecovery ? 'text' : 'numeric'} autoComplete="one-time-code" />
+            <TextInput value={code} onChange={(e) => setCode(e.target.value)} autoFocus inputMode={useRecovery ? 'text' : 'numeric'} autoComplete="one-time-code" />
             {err && <div className="err">{err}</div>}
             <button className="primary" disabled={busy}>{t('verify')}</button>
             <button type="button" className="link" onClick={() => { setUseRecovery(!useRecovery); setCode('') }}>{useRecovery ? t('totp_code') : t('use_recovery')}</button>
@@ -67,7 +68,7 @@ export default function Login({ step, onDone }: { step: string; onDone: () => vo
             {setup && <div style={{ textAlign: 'center' }}><QR value={setup.uri} /></div>}
             {setup && <div className="small muted">{t('secret_key')}: <code>{setup.secret}</code></div>}
             <label>{t('totp_code')}</label>
-            <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
+            <TextInput value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
             {err && <div className="err">{err}</div>}
             <button className="primary" disabled={busy || !setup}>{t('verify')}</button>
           </form>

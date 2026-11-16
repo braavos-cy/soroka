@@ -6,7 +6,7 @@ import { generatePassword } from '../password'
 import { useStore } from '../store'
 import { Modal, QR } from '../components/Reauth'
 import { FolderSelect, fmtBytes, fmtDate, TagAdder, TagChips } from '../components/Pickers'
-import { Select, useDialog } from '../components/ui'
+import { Select, TextInput, useDialog } from '../components/ui'
 import { CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, MessageCircle, KeyRound, LockOpen, Pencil, Plug, ScrollText, Send, Server, ShieldOff, SlidersHorizontal, Trash2, UserCheck, UserX, Users as UsersIcon } from 'lucide-react'
 
 export default function AdminPage() {
@@ -185,8 +185,8 @@ function PrivateCode({ platform, value, onSaved }: { platform: string; value: st
     <div className="col" style={{ gap: 4 }}>
       <h4 style={{ margin: 0 }}>{t('private_code')}</h4>
       <div className="row">
-        <input type={show ? 'text' : 'password'} value={v} autoComplete="off" placeholder={t('private_code_none')} maxLength={100}
-          onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && dirty) save() }} style={{ width: 240 }} />
+        <TextInput type={show ? 'text' : 'password'} value={v} autoComplete="off" placeholder={t('private_code_none')} maxLength={100}
+          onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && dirty) save() }} wrapStyle={{ width: 240, maxWidth: '100%' }} />
         <button className="icon" title={show ? t('hide') : t('show')} onClick={() => setShow(!show)}>{show ? <EyeOff size={15} /> : <Eye size={15} />}</button>
         <button className="primary" disabled={!dirty} onClick={save}>{t('save')}</button>
       </div>
@@ -304,11 +304,11 @@ function AddUser({ onClose }: { onClose: () => void }) {
   return (
     <Modal onClose={onClose}>
       <h2>{t('add_user')}</h2>
-      <label>{t('email')}</label><input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} style={{ width: '100%' }} />
-      <label>{t('name')}</label><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} style={{ width: '100%' }} />
+      <label>{t('email')}</label><TextInput value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} wrapStyle={{ width: '100%' }} />
+      <label>{t('name')}</label><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} wrapStyle={{ width: '100%' }} />
       <label>{t('role')}</label><Select value={f.role} onChange={(v) => setF({ ...f, role: v })} options={[{ value: 'user', label: t('role_user') }, { value: 'admin', label: t('role_admin') }]} />
       <label>{t('temp_password')}</label>
-      <div className="row" style={{ flexWrap: 'nowrap' }}><input value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="off" style={{ flex: 1, fontFamily: 'monospace' }} /><button type="button" onClick={() => setF({ ...f, password: generatePassword() })}>{t('generate_password')}</button></div>
+      <div className="row" style={{ flexWrap: 'nowrap' }}><TextInput value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="off" style={{ fontFamily: 'monospace' }} wrapStyle={{ flex: 1 }} /><button type="button" onClick={() => setF({ ...f, password: generatePassword() })}>{t('generate_password')}</button></div>
       {err && <div className="err">{err}</div>}
       <div className="row" style={{ marginTop: 16 }}><span className="spacer" /><button onClick={onClose}>{t('cancel')}</button><button className="primary" onClick={save}>{t('save')}</button></div>
     </Modal>
@@ -368,7 +368,7 @@ function Audit() {
   )
   return (
     <div className="card col">
-      <div className="row"><h3 style={{ margin: 0 }}>{t('audit_log')}</h3><span className="spacer" /><input type="search" placeholder={t('search_log')} value={input} onChange={(e) => setInput(e.target.value)} style={{ width: 260, maxWidth: '100%' }} /></div>
+      <div className="row"><h3 style={{ margin: 0 }}>{t('audit_log')}</h3><span className="spacer" /><TextInput placeholder={t('search_log')} value={input} onChange={(e) => setInput(e.target.value)} wrapStyle={{ width: 260, maxWidth: '100%' }} /></div>
       {pager}
       <div className="table-scroll"><table className="list">
         <thead><tr><th>{t('date')}</th><th>User</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>

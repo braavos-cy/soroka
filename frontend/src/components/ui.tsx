@@ -1,8 +1,8 @@
 // Shared UI primitives: dropdown menus / selects (instead of native <select>) and in-app dialogs
 // (instead of window.confirm / window.prompt).
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createContext, forwardRef, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, Plus, Search } from 'lucide-react'
+import { Check, ChevronDown, Plus, Search, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { Modal } from './Reauth'
 
@@ -109,7 +109,7 @@ export function Dropdown({ button, items, onSelect, selected, searchable, classN
         <div ref={pop} className="dd-pop" style={pos} onKeyDown={onKey}>
           {search && (
             <div className="dd-search"><Search size={14} />
-              <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder || t('filter_placeholder')} maxLength={searchMaxLength} /></div>
+              <TextInput autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder || t('filter_placeholder')} maxLength={searchMaxLength} small wrapStyle={{ flex: 1 }} /></div>
           )}
           <div ref={list} className="dd-list" role="listbox" tabIndex={-1}>
             {shown.map((i, n) => (
@@ -176,6 +176,55 @@ export function Menu({ label, icon, items, onSelect, caret = true, ...rest }: {
     button={<>{icon}{label && <span className="dd-val">{label}</span>}{caret && <ChevronDown size={14} className="dd-caret" />}</>} />
 }
 
+// ---------------------------------------------------------------- text input with a clear (×) button
+type TextInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
+  /** class / style of the wrapper: sizing (width, flex) belongs here, the field fills it */
+  wrapClassName?: string
+  wrapStyle?: React.CSSProperties
+  /** smaller ×, for compact fields */
+  small?: boolean
+  /** after clearing (the field also gets an ordinary change event, so controlled fields need nothing else) */
+  onClear?: () => void
+}
+
+/** A text field with the app's standard clear button (the one in the main search box): shown whenever there is
+ *  text, not only on hover / focus like the browser's own. Works for controlled and uncontrolled fields: clearing
+ *  goes through a real input event, so onChange runs as if the text had been deleted by hand. */
+export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function TextInput(
+  { wrapClassName, wrapStyle, small, onClear, onChange, ...props }, outer) {
+  const { t } = useT()
+  const ref = useRef<HTMLInputElement | null>(null)
+  const setRef = (el: HTMLInputElement | null) => {
+    ref.current = el
+    if (typeof outer === 'function') outer(el); else if (outer) outer.current = el
+  }
+  const controlled = props.value !== undefined
+  const [has, setHas] = useState(() => String(props.value ?? props.defaultValue ?? '') !== '')
+  useEffect(() => { if (controlled) setHas(String(props.value ?? '') !== '') }, [props.value, controlled])
+  // an uncontrolled field re-created with another default (key change) or filled by the browser
+  useEffect(() => { if (!controlled && ref.current) setHas(ref.current.value !== '') })
+  const clear = () => {
+    const el = ref.current
+    if (!el) return
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(el, '')
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    setHas(false)
+    el.focus()
+    onClear?.()
+  }
+  const showX = has && !props.disabled && !props.readOnly
+  return (
+    <span className={'clearable' + (small ? ' small' : '') + (wrapClassName ? ' ' + wrapClassName : '')} style={wrapStyle}>
+      <input ref={setRef} {...props} onChange={(e) => { setHas(e.target.value !== ''); onChange?.(e) }} />
+      {showX && (
+        <button type="button" className="icon clear-x" tabIndex={-1} title={t('clear_selection')}
+          onMouseDown={(e) => e.preventDefault() /* keep focus: fields that save on blur must not save the old text */}
+          onClick={clear}><X size={small ? 13 : 15} /></button>
+      )}
+    </span>
+  )
+})
+
 // ---------------------------------------------------------------- dialogs
 type ConfirmOpts = { title: string; message?: React.ReactNode; ok?: string; danger?: boolean }
 type PromptOpts = { title: string; label?: string; value?: string; ok?: string; placeholder?: string; mono?: boolean }
@@ -226,8 +275,8 @@ function PromptDialog({ o, onDone }: { o: PromptOpts; onDone: (v: string | null)
       <form onSubmit={(e) => { e.preventDefault(); if (v.trim()) onDone(v.trim()) }} className="col">
         <h2>{o.title}</h2>
         {o.label && <label>{o.label}</label>}
-        <input autoFocus value={v} onChange={(e) => setV(e.target.value)} placeholder={o.placeholder} onFocus={(e) => e.target.select()}
-          style={o.mono ? { fontFamily: 'ui-monospace, monospace' } : undefined} />
+        <TextInput autoFocus value={v} onChange={(e) => setV(e.target.value)} placeholder={o.placeholder} onFocus={(e) => e.target.select()}
+          style={o.mono ? { fontFamily: 'ui-monospace, monospace' } : undefined} wrapStyle={{ width: '100%' }} />
         <div className="row dlg-actions">
           <span className="spacer" />
           <button type="button" onClick={cancel}>{t('cancel')}</button>

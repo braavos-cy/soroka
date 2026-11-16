@@ -6,7 +6,7 @@ import { useT } from '../i18n'
 import { useStore } from '../store'
 import { ChangePassword, RecoveryCodes } from './Login'
 import { Modal, QR } from '../components/Reauth'
-import { useDialog } from '../components/ui'
+import { TextInput, useDialog } from '../components/ui'
 import { fmtDate } from '../components/Pickers'
 
 export default function AccountPage() {
@@ -98,7 +98,7 @@ export default function AccountPage() {
           <div style={{ textAlign: 'center' }}><QR value={setup.uri} /></div>
           <div className="small muted">{t('secret_key')}: <code>{setup.secret}</code></div>
           <label>{t('totp_code')}</label>
-          <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" />
+          <TextInput value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" />
           <div className="row" style={{ marginTop: 12 }}><span className="spacer" /><button className="primary" onClick={finishSetup}>{t('verify')}</button></div>
         </Modal>
       )}

@@ -5,7 +5,7 @@ import { api, Folder, Tag } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
 import { Modal } from './Reauth'
-import { Menu, useDialog } from './ui'
+import { Menu, TextInput, useDialog } from './ui'
 import { randomTagColor } from './Pickers'
 
 export const DND = 'application/x-soroka'
@@ -22,7 +22,7 @@ function InlineEdit({ value, onCommit, onCancel, maxLength = 300 }: { value: str
     if (v.trim() && v.trim() !== value) onCommit(v.trim()); else onCancel()
   }
   return (
-    <input ref={ref} className="inline-edit" value={v} onChange={(e) => setV(e.target.value)} maxLength={maxLength}
+    <TextInput ref={ref} className="inline-edit" wrapClassName="inline-edit-wrap" small value={v} onChange={(e) => setV(e.target.value)} maxLength={maxLength}
       onClick={(e) => e.stopPropagation()} onBlur={commit}
       onKeyDown={(e) => {
         e.stopPropagation()
@@ -251,7 +251,8 @@ function TagManager({ onClose }: { onClose: () => void }) {
         {[...tags].sort((a, b) => a.name.localeCompare(b.name)).map((tg) => (
           <tr key={tg.id}>
             <td><input type="color" value={tg.color} onChange={(e) => upd(tg, { color: e.target.value })} className="color-input" /></td>
-            <td><input defaultValue={tg.name} maxLength={Math.max(tagMaxLen, tg.name.length)} onBlur={(e) => e.target.value !== tg.name && upd(tg, { name: e.target.value })} /></td>
+            <td><TextInput small defaultValue={tg.name} maxLength={Math.max(tagMaxLen, tg.name.length)}
+              onBlur={(e) => { const v = e.target.value.trim(); if (!v) e.target.value = tg.name; else if (v !== tg.name) upd(tg, { name: v }) }} /></td>
             <td className="muted small">{tg.count}</td>
             <td>
               <Menu icon={<Merge size={14} />} label={t('merge_into')} align="right"

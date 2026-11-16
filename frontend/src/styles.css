@@ -25,6 +25,16 @@ button.icon.danger:hover { color: var(--bad); }
 button.active, .seg button.active { background: var(--accent-weak); border-color: var(--accent); }
 input, select, textarea { border: 1px solid var(--border); background: var(--panel); border-radius: 4px; padding: 5px 8px; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-weak); border-color: var(--accent); }
+/* text fields with the app's clear button (TextInput): the same × as the main search box, smaller in compact
+   fields; the browser's own × (only on hover / focus, looks different per browser) is never shown */
+input[type=search]::-webkit-search-cancel-button { display: none; }
+.clearable { position: relative; display: inline-flex; align-items: center; max-width: 100%; min-width: 0; vertical-align: middle; }
+.clearable > input { flex: 1 1 auto; width: 100%; min-width: 0; padding-right: 28px !important; }
+.clearable.small > input { padding-right: 22px !important; }
+.clearable > .clear-x { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); display: flex; }
+.clearable.small > .clear-x { right: 3px; padding: 2px; }
+.login-wrap .clearable { width: 100%; }
+.inline-edit-wrap { flex: 1; min-width: 0; }
 /* sliders: no text-box frame; a plain track in the accent colour */
 input[type=range] { border: 0; background: transparent; padding: 0; margin: 6px 0; width: 100%; min-width: 0; accent-color: var(--accent); cursor: pointer; }
 input[type=range]:focus { outline: none; }
