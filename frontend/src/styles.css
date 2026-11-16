@@ -25,6 +25,10 @@ button.icon.danger:hover { color: var(--bad); }
 button.active, .seg button.active { background: var(--accent-weak); border-color: var(--accent); }
 input, select, textarea { border: 1px solid var(--border); background: var(--panel); border-radius: 4px; padding: 5px 8px; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-weak); border-color: var(--accent); }
+/* sliders: no text-box frame; a plain track in the accent colour */
+input[type=range] { border: 0; background: transparent; padding: 0; margin: 6px 0; width: 100%; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+input[type=range]:focus { outline: none; }
+input[type=range]:focus-visible { outline: 2px solid var(--accent-weak); outline-offset: 2px; }
 label { display: block; margin: 8px 0 3px; color: var(--muted); font-size: 12px; }
 label.inline { display: inline-flex; gap: 6px; align-items: center; margin: 0; color: var(--text); font-size: 14px; }
 h1, h2, h3 { margin: 0 0 12px; } h2 { font-size: 18px; } h3 { font-size: 15px; }

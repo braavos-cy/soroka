@@ -447,8 +447,9 @@ function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: a
           <div className="seg">
             {(['color', 'gray', 'bw'] as const).map((m) => <button key={m} className={cl.mode === m ? 'active' : ''} onClick={() => setCl({ ...cl, mode: m })}>{t(m + '_mode')}</button>)}
           </div>
-          <label>{t('strength')} {Math.round(cl.strength * 100)}%</label>
-          <input type="range" min={0} max={1} step={0.05} value={cl.strength} onChange={(e) => setCl({ ...cl, strength: Number(e.target.value) })} />
+          <div className="row"><span className="small muted">{t('strength')}</span>
+            <input type="range" min={0} max={1} step={0.05} value={cl.strength} style={{ flex: 1 }} onChange={(e) => setCl({ ...cl, strength: Number(e.target.value) })} />
+            <span className="small" style={{ width: 44 }}>{Math.round(cl.strength * 100)}%</span></div>
           <button className="primary" style={{ alignSelf: 'flex-start' }} onClick={() => edit('cleanup', cl)}>{t('apply')}</button>
         </div>
       )
