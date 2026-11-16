@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session as DB
 
 from . import models as m
 from . import reactions
-from .formats import sniff
+from .formats import MAX_FILE_SIZE, sniff
 from .jobs import enqueue_document
 from .storage import storage
 
@@ -150,6 +150,9 @@ def ingest(db: DB, meta: IngestMeta, files: list[InFile], uploaded_by: int | Non
     groups: dict[int | None, list[InFile]] = {}
     skipped: list[dict] = []
     for f in files:
+        if len(f.data) > MAX_FILE_SIZE:  # a zip too: it is not unpacked
+            skipped.append({"filename": f.filename, "reason": "file_too_large"})
+            continue
         kind, _ = sniff(f.filename, f.data)
         if kind == "zip":
             for parts, inner in expand_zip(f.data):
@@ -163,6 +166,9 @@ def ingest(db: DB, meta: IngestMeta, files: list[InFile], uploaded_by: int | Non
     for fid, flist in groups.items():
         stored: list[m.FileOriginal] = []
         for f in flist:
+            if len(f.data) > MAX_FILE_SIZE:  # a file unpacked from a zip
+                skipped.append({"filename": f.filename, "reason": "file_too_large"})
+                continue
             kind, mime = sniff(f.filename, f.data)
             if kind in ("unsupported", "zip"):
                 skipped.append({"filename": f.filename, "reason": "unsupported_type"})
@@ -192,6 +198,10 @@ def ingest(db: DB, meta: IngestMeta, files: list[InFile], uploaded_by: int | Non
             for t in tag_ids:
                 db.add(m.DocumentTag(document_id=doc.id, tag_id=t))
             created.append(doc.id)
+    if skipped and not created and not duplicates:
+        # nothing usable at all: refuse the request (nothing was stored; the caller's session rolls back the event)
+        db.rollback()
+        raise IngestRejected(skipped[0]["reason"])
     if duplicates and not created:
         reactions.queue(db, ev, reactions.SAVED)  # already stored: same answer to the sender as a fresh save
     db.commit()

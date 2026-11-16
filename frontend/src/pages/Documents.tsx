@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, DocSummary, downloadPost } from '../api'
 import { plural, useT } from '../i18n'
 import { folderPath, useStore } from '../store'
 import { DND, DND_DOCS } from '../components/Sidebar'
 import { setMultiDragImage } from '../components/dragGhost'
-import UploadModal, { itemsFromDrop, toUploads } from '../components/Upload'
+import UploadModal, { checkItems, dragVerdict, itemsFromDrop, skippedMessage, toUploads } from '../components/Upload'
 import { fmtMB, UpTask, useUploads } from '../components/uploads'
 import { DateRange, FileName, FolderMenu, fmtDate, PageThumb, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Combo, Select, useDialog } from '../components/ui'
-import { ArchiveRestore, ArrowDownUp, Files, Download, LayoutGrid, List, Pause, Play, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
+import { ArchiveRestore, ArrowDownUp, Ban, Files, Download, LayoutGrid, List, Pause, Play, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
 
 const PAGE = 60
 
@@ -250,19 +250,45 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
 
   // files dragged in from the computer and dropped anywhere on the list: uploaded into the folder shown (as the
   // dialog would with its defaults). Only files from outside: documents dragged within the page carry no 'Files'.
-  const [fileOver, setFileOver] = useState(false)
+  // fileOver: what is being dragged, as far as the types tell (none supported -> "not supported", no drop)
+  const [fileOver, setFileOver] = useState<false | 'ok' | 'some' | 'none'>(false)
   const dragDepth = useRef(0) // enter/leave fire for every child crossed: count them to know when the pointer left
+  // the overlay's message sits at the centre of the part of the overlay that is on screen (the list can be much
+  // taller than the window and scrolled anywhere)
+  const [dropCenter, setDropCenter] = useState<{ x: number; y: number } | null>(null)
+  useLayoutEffect(() => {
+    if (!fileOver || !area.current) return setDropCenter(null)
+    const r = area.current.getBoundingClientRect()
+    const s = (area.current.closest('.content') as HTMLElement | null)?.getBoundingClientRect()
+    const top = Math.max(r.top, s?.top ?? 0, 0), bottom = Math.min(r.bottom, s?.bottom ?? innerHeight, innerHeight)
+    const left = Math.max(r.left, 0), right = Math.min(r.right, innerWidth)
+    setDropCenter({ x: (left + right) / 2, y: (top + bottom) / 2 })
+  }, [!!fileOver])
+  // a refused drop (unsupported files) or a drag that ended outside leaves no drop event to clear the overlay;
+  // mouse moves never happen during a drag, so the first one after it ends does
+  useEffect(() => {
+    if (!fileOver) return
+    const reset = () => { dragDepth.current = 0; setFileOver(false) }
+    document.addEventListener('mousemove', reset)
+    return () => document.removeEventListener('mousemove', reset)
+  }, [fileOver])
   const acceptsFiles = view === 'active' && !upload
   const isFileDrag = (e: React.DragEvent) => acceptsFiles && Array.from(e.dataTransfer.types).includes('Files')
   const fileDrop = {
-    onDragEnter: (e: React.DragEvent) => { if (!isFileDrag(e)) return; e.preventDefault(); dragDepth.current++; setFileOver(true) },
-    onDragOver: (e: React.DragEvent) => { if (!isFileDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy' },
+    onDragEnter: (e: React.DragEvent) => { if (!isFileDrag(e)) return; e.preventDefault(); dragDepth.current++; setFileOver(dragVerdict(e.dataTransfer)) },
+    onDragOver: (e: React.DragEvent) => {
+      if (!isFileDrag(e)) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = dragVerdict(e.dataTransfer) === 'none' ? 'none' : 'copy'
+    },
     onDragLeave: (e: React.DragEvent) => { if (!isFileDrag(e)) return; if (--dragDepth.current <= 0) { dragDepth.current = 0; setFileOver(false) } },
     onDrop: async (e: React.DragEvent) => {
       if (!isFileDrag(e)) return
       e.preventDefault(); dragDepth.current = 0; setFileOver(false)
-      const items = await itemsFromDrop(e.dataTransfer)
-      if (items.length) uploads.add(toUploads(items, { folder: folderId, tagIds: [], combine: false, low: false }))
+      // only what can be uploaded (type, size); the rest is named in a message
+      const { ok, skipped } = checkItems(await itemsFromDrop(e.dataTransfer))
+      if (ok.length) uploads.add(toUploads(ok, { folder: folderId, tagIds: [], combine: false, low: false }))
+      if (skipped.length) toast(skippedMessage(t, skipped))
     },
   }
 
@@ -370,7 +396,16 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
       )}
       <div ref={area} className="results" onMouseDown={startBand}>
       {band && <div className="band" style={{ left: band.x, top: band.y, width: band.w, height: band.h }} />}
-      {fileOver && <div className="file-drop"><div><UploadIcon size={28} /> {t('drop_to_upload')} <b>{heading}</b></div></div>}
+      {fileOver && (
+        <div className={'file-drop' + (fileOver === 'none' ? ' bad' : '')}><div className="file-drop-msg"
+          style={dropCenter ? { left: dropCenter.x, top: dropCenter.y } : { visibility: 'hidden' }}>
+          {fileOver === 'none'
+            ? <span className="icon-text"><Ban size={24} /> {t('drag_not_supported')}</span>
+            : <span className="icon-text"><UploadIcon size={28} /> {t('drop_to_upload')} <b>{heading}</b></span>}
+          {fileOver === 'some' && <span className="small file-drop-warn">{t('drag_some_not_supported')}</span>}
+          <span className="small muted">{t('upload_limits')}</span>
+        </div></div>
+      )}
       {upFilter && <div className="filters small">{t('up_filter_on')} <button className="link" onClick={() => setParam('upload', '')}><X size={13} /> {t('clear_selection')}</button></div>}
       {!loading && docsShown.length === 0 && upVisible.length === 0 && <div className="page-pad muted">{t('nothing_found')}</div>}
       {searchMode ? (

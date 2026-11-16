@@ -15,7 +15,7 @@ from .api.documents import purge
 from .api.uploads import cleanup_stale as cleanup_stale_uploads
 from .config import settings
 from .db import SessionLocal, now
-from .ingest import InFile, IngestMeta, ingest
+from .ingest import InFile, IngestMeta, IngestRejected, ingest
 from .storage import storage
 
 log = logging.getLogger("soroka.scheduler")
@@ -73,9 +73,11 @@ def watch_import_dir(db) -> None:
     """Files dropped into DATA_DIR/import/<sub/folders> are imported with low priority, structure preserved."""
     IMPORT_DIR.mkdir(parents=True, exist_ok=True)
     done = IMPORT_DIR / "_done"
+    skipped = IMPORT_DIR / "_skipped"  # refused files (type not supported, over the size limit): not retried
     cutoff = time.time() - 60  # file must be unchanged for a minute (still copying otherwise)
     for path in sorted(IMPORT_DIR.rglob("*")):
-        if not path.is_file() or done in path.parents or path.name.startswith(".") or path.stat().st_mtime > cutoff:
+        if (not path.is_file() or done in path.parents or skipped in path.parents or path.name.startswith(".")
+                or path.stat().st_mtime > cutoff):
             continue
         rel = path.relative_to(IMPORT_DIR)
         from .ingest import _ensure_folder_path
@@ -89,6 +91,13 @@ def watch_import_dir(db) -> None:
         try:
             ingest(db, IngestMeta(platform="import", folder_id=fid, priority="low", forced=True,
                                   extra={"import_path": str(rel)}), [InFile(path.name, path.read_bytes())])
+        except IngestRejected as e:
+            db.rollback()
+            log.info("import skipped (%s): %s", e, rel)
+            target = skipped / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(target))
+            continue
         except Exception:  # noqa: BLE001
             db.rollback()
             log.exception("import failed: %s", rel)

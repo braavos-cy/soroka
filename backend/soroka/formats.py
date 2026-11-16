@@ -4,6 +4,15 @@ import os
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff", ".bmp", ".gif", ".avif"}
 OFFICE_EXT = {".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf", ".txt", ".csv"}
 ZIP_OFFICE = {".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp"}
+# what can be uploaded: the types above, PDF, and zip archives (unpacked, each file inside checked again).
+# The UI checks the same list and limit before uploading (frontend/src/components/Upload.tsx: ACCEPT_EXT, MAX_FILE_MB).
+ACCEPT_EXT = IMAGE_EXT | OFFICE_EXT | {".pdf", ".zip"}
+MAX_FILE_SIZE = 100 * 1024 ** 2  # per file (a zip counts as one file; files inside it are checked too)
+
+
+def accepted_name(filename: str) -> bool:
+    """Upload pre-check by the name alone; the content is checked again on ingest (sniff)."""
+    return os.path.splitext(filename.lower())[1] in ACCEPT_EXT
 
 
 def sniff(filename: str, data: bytes) -> tuple[str, str]:

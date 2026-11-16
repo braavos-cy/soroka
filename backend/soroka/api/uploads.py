@@ -13,10 +13,10 @@ from pydantic import BaseModel
 
 from ..config import settings
 from ..deps import Principal, ingest_principal
+from ..formats import MAX_FILE_SIZE, accepted_name
 
 router = APIRouter(prefix="/api/uploads", tags=["ingest"])
 
-MAX_SIZE = 2 * 1024 ** 3  # same limit as a direct /api/ingest request (Caddyfile)
 MAX_CHUNK = 16 * 1024 ** 2
 STALE_SECONDS = 48 * 3600
 _ID = re.compile(r"^[0-9a-f]{32}$")
@@ -63,7 +63,10 @@ class CreateIn(BaseModel):
 
 @router.post("")
 def create(body: CreateIn, p: Principal = Depends(ingest_principal)):
-    if body.size < 0 or body.size > MAX_SIZE:
+    # refused before a byte is sent: types the pipeline cannot handle yet, and files over the size limit
+    if not accepted_name(body.filename):
+        raise HTTPException(415, "unsupported_type")
+    if body.size < 0 or body.size > MAX_FILE_SIZE:
         raise HTTPException(413, "file_too_large")
     upload_id = secrets.token_hex(16)
     (_dir() / f"{upload_id}.part").touch()

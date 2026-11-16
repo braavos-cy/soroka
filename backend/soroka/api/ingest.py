@@ -53,6 +53,9 @@ async def ingest_files(request: Request, files: list[UploadFile] | None = File(N
     try:
         res = ingest(db, md, in_files, uploaded_by=p.user_id)
     except IngestRejected as e:
+        if str(e) in ("unsupported_type", "file_too_large"):  # these uploads can never succeed: free the space
+            for u in ids:
+                uploads.discard(u)
         raise HTTPException(409, str(e))
     for u in ids:
         uploads.discard(u)
