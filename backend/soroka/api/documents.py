@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import and_, exists, func, not_, or_, select, text
+from sqlalchemy import and_, case, exists, func, not_, or_, select, text
 from sqlalchemy.orm import Session as DB
 
 from .. import appsettings
@@ -17,7 +17,8 @@ from ..db import get_db, now
 from ..deps import Principal, admin, admin_reauth, audit, client_ip, require_reauth, ui_user
 from ..jobs import enqueue_document, enqueue_finalize, enqueue_page
 from ..pipeline.recipe import EDITABLE, apply_edit, default_recipe, normalize
-from ..search import build_tsquery, current_page_ids, headline, index_document, rank
+from ..search import (HIT_PARTS, build_tsquery, current_page_ids, exact_filters, exact_hit_filter, headlines_by_part,
+                      index_document, locate_hits, merge_hits, phrase_match, rank, split_hits)
 from ..storage import storage
 from .organize import subtree_ids
 
@@ -125,18 +126,44 @@ def list_documents(
     tsq, terms = build_tsquery(db, q) if q.strip() else (None, [])
     total = None
     if tsq is not None:
-        qry = qry.filter(m.Document.search_vector.op("@@")(tsq))
+        qry = qry.filter(m.Document.search_vector.op("@@")(tsq), *exact_filters(q))  # "quoted phrases": exact wording
+        keep = exact_hit_filter(q) or (lambda hit: True)
         total = qry.count()
-        rows = (qry.add_columns(headline(tsq), rank(tsq)).order_by(rank(tsq).desc(), m.Document.received_at.desc())
-                .offset(offset).limit(limit).all())
-        docs = [(r[0], r[1]) for r in rows]
+        # documents that contain the words as a phrase come first, then the ones that only contain all the words
+        phrase = phrase_match(q)
+        order = ([case((phrase, 0), else_=1)] if phrase is not None else []) + [rank(tsq).desc(),
+                                                                                  m.Document.received_at.desc()]
+        heads = headlines_by_part(tsq, q)  # 3 columns, or 6 when the query also reads as a phrase
+        rows = qry.add_columns(*heads).order_by(*order).offset(offset).limit(limit).all()
+        # every occurrence with the part it was found in: file title, context (chat, sender, caption, tags), text;
+        # in each part the whole phrase first, then the places with only some of the words
+        docs = []
+        for r in rows:
+            hits = []
+            for n, part in enumerate(HIT_PARTS):
+                loose = [x for x in split_hits(r[1 + n]) if keep(x)]
+                whole = split_hits(r[4 + n]) if len(heads) == 6 else []
+                # each list is in text order, which is what locate_hits needs to tell repeated lines apart
+                hits += locate_hits(r[0], part, whole) + locate_hits(r[0], part, merge_hits(whole, loose)[len(whole):])
+            docs.append((r[0], hits))
     else:
         total = qry.count()
         docs = [(d, None) for d in qry.order_by(SORTS.get(sort, SORTS["received_desc"]), m.Document.id.desc())
                 .offset(offset).limit(limit).all()]
     fp = first_pages(db, [d for d, _ in docs])
-    return {"total": total, "terms": terms,
-            "items": [doc_summary(d, *fp.get(d.id, (None, None)), snippet=s) for d, s in docs]}
+    items = []
+    for d, hits in docs:
+        hits = hits or []
+        # the title usually is the file name: one "title" line is enough
+        titled = False
+        for h in list(hits):
+            if h["where"] == "title":
+                if titled:
+                    hits.remove(h)
+                titled = True
+        items.append({**doc_summary(d, *fp.get(d.id, (None, None)),
+                                    snippet=" … ".join(h["text"] for h in hits[:2]) or None), "hits": hits})
+    return {"total": total, "terms": terms, "items": items}
 
 
 def page_summary(p: m.Page) -> dict:
