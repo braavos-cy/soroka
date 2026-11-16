@@ -27,10 +27,18 @@ export default function DocumentView() {
   const { user, folders, reload: reloadStore, toast } = useStore()
   const dlg = useDialog()
   const nav = useNavigate()
-  // back to where the document was opened from (list, folder, search, review); opened by direct link -> the list
-  const goBack = () => ((window.history.state?.idx ?? 0) > 0 ? nav(-1) : nav('/'))
   const [params] = useSearchParams()
   const q = params.get('q') || ''
+  // opened from search results; emptying the search box while here drops ?q= from the address
+  const fromSearch = useRef(!!q)
+  // where the document lives: its folder in the list, the trash, or the rejected list, with it highlighted
+  const showPlace = (opts?: { replace?: boolean }) => doc && nav(doc.trashed_at ? '/trash' : doc.status === 'rejected' ? '/rejected' : doc.folder_id ? `/?folder=${doc.folder_id}` : '/', { state: { highlight: doc.id }, ...opts })
+  // back to where the document was opened from (list, folder, search, review); opened by direct link -> the list.
+  // Opened from a search that has since been cleared: not back to the results, to where the document is.
+  const goBack = () => {
+    if (fromSearch.current && !q) return showPlace({ replace: true })
+    return (window.history.state?.idx ?? 0) > 0 ? nav(-1) : nav('/')
+  }
   const [doc, setDoc] = useState<any>(null)
   // opened from a search occurrence: ?page= (1-based), ?tab=, ?focus= (info field or context message)
   const [pageIdx, setPageIdx] = useState(() => Math.max(0, Number(params.get('page') || 1) - 1))
@@ -147,7 +155,7 @@ export default function DocumentView() {
           <input className="title-input" defaultValue={doc.title} key={doc.title} title={doc.title} onBlur={(e) => e.target.value !== doc.title && patch({ title: e.target.value })} />
         </div>
         <div className="dh-meta">
-          <button onClick={() => nav(trashed ? '/trash' : doc.status === 'rejected' ? '/rejected' : doc.folder_id ? `/?folder=${doc.folder_id}` : '/', { state: { highlight: doc.id } })} title={doc.folder_id ? folderPath(folders, doc.folder_id) : t('no_folder')}><FolderSearch size={15} /> <span className="lbl-phone-hide">{t('show_in_folders')}</span></button>
+          <button onClick={() => showPlace()} title={doc.folder_id ? folderPath(folders, doc.folder_id) : t('no_folder')}><FolderSearch size={15} /> <span className="lbl-phone-hide">{t('show_in_folders')}</span></button>
           <TagAdder exclude={doc.tags} onAdd={(tid) => patch({ tag_ids: [...doc.tags, tid] })} />
           <TagChips singleLine ids={doc.tags} onRemove={(tid) => patch({ tag_ids: doc.tags.filter((x: number) => x !== tid) })} />
           {doc.status === 'rejected' && <button className="primary" onClick={() => post(`/api/documents/${doc.id}/rescue`)}>{t('rescue')}</button>}
