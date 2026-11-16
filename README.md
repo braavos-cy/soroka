@@ -96,10 +96,4 @@ Done:
   retention + storage-pressure rule, review queue, search (Russian morphology, ё/е, typo tolerance, prefix,
   snippets, hit highlighting on page images), downloads, admin export, RU/EN UI.
 
-Next phases:
-* **2 — ML pipeline (GPU worker):** document/non-document classifier (chat screenshots!), PaddleOCR Cyrillic recognizer
-  vs Tesseract evaluation on a Russian test set, PP-LCNet orientation, DBNet lines, GPU dewarping/restoration models,
-  PP-Structure layout, dictionary-based valid-word ratio, fastText/Lingua LID, inline OCR text correction, layout editing,
-  WebAuthn/passkeys, evaluation harness (§13).
-* **3 — Telegram connector** (+ self-hosted Bot API server), **browser extension** (Gmail/Outlook, MV3),
-  **document tools** (merge/split/reorder/move pages, image↔PDF, versions UI), auto-split of spreads.
+What's next: [TODO.md](TODO.md).
