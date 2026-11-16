@@ -68,12 +68,18 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     p.delete('q')
     nav('/?' + p.toString())
   }
-  // a press anywhere outside the box takes the cursor out of it. The browser does not always do this by itself:
-  // the document list cancels the default mouse-down (drag selection), and that also cancels the blur.
+  // a press anywhere outside a text field takes the cursor out of it (the search box, the filters, any field).
+  // The browser does not always do this by itself: the document list cancels the default mouse-down (drag
+  // selection), and that also cancels the blur. A press on the field's own parts (its clear button, the search
+  // form) or in an open suggestion / dropdown list keeps the focus.
   useEffect(() => {
     const h = (e: PointerEvent) => {
-      const el = searchInput.current
-      if (el && document.activeElement === el && !el.closest('form')?.contains(e.target as Node)) el.blur()
+      const el = document.activeElement as HTMLElement | null
+      if (!el || !el.matches('input, textarea')) return
+      const t = e.target as Node
+      const own = el.closest('form.search, .clearable') || el
+      if (own.contains(t) || (t instanceof Element && t.closest('.dd-pop'))) return
+      el.blur()
     }
     document.addEventListener('pointerdown', h, true)
     return () => document.removeEventListener('pointerdown', h, true)
