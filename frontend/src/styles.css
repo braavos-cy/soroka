@@ -236,6 +236,16 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .dd-item .dd-icon { display: flex; color: var(--muted); flex: none; } .dd-item[aria-selected="true"] .dd-icon { color: var(--accent); }
 .dd-item .dd-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .dd-item .dd-check { flex: none; }
+/* recent searches under the main search box */
+.topbar .search .recent-pop { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 300; padding: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 5px; box-shadow: 0 8px 24px rgba(0,0,0,.14); }
+.recent-pop .recent-h { padding: 4px 8px 6px; font-size: 12px; color: var(--muted); }
+.recent-pop .recent-item { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 4px 0 8px; border-radius: 4px; cursor: pointer; }
+.recent-pop .recent-item.active { background: var(--panel2); }
+.recent-pop .recent-ic { flex: none; color: var(--muted); }
+.recent-pop .recent-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-pop .recent-x { flex: none; padding: 2px; opacity: 0; }
+.recent-pop .recent-item:hover .recent-x, .recent-pop .recent-item.active .recent-x { opacity: 1; }
+@media (hover: none) { .recent-pop .recent-x { opacity: 1; } } /* touch: always visible */
 .dd-item .dd-count { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .dd-empty { padding: 8px 10px; color: var(--muted); font-size: 13px; }
 .filters .dd-btn { padding: 3px 8px; font-size: 13px; }

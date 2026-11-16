@@ -13,7 +13,7 @@ import AccountPage from './pages/Account'
 import { ReauthModal } from './components/Reauth'
 import { DialogProvider } from './components/ui'
 import { UploadsProvider } from './components/uploads'
-import { PanelLeftClose, PanelLeftOpen, Bird, CircleUser, Files, ListChecks, LogOut, Menu, Search, Settings, ShieldX, Trash2, X } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Bird, CircleUser, Files, History, ListChecks, LogOut, Menu, Search, Settings, ShieldX, Trash2, X } from 'lucide-react'
 
 export default function App() {
   const [lang, setLangState] = useState<Lang>(() => {
@@ -84,6 +84,40 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     document.addEventListener('pointerdown', h, true)
     return () => document.removeEventListener('pointerdown', h, true)
   }, [])
+  // recent searches: the last 10, newest first, per user in this browser. Search runs while typing, so a search
+  // counts as made when it is confirmed: Enter, a pick from this list, opening a result, or leaving the box
+  // with the text in it. Shown while the box has the focus; typing narrows them to those containing the text.
+  const recentKey = `recent_searches:${user.id}`
+  const [recent, setRecent] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem(recentKey) || '[]') } catch { return [] } })
+  const [recentOpen, setRecentOpen] = useState(false)
+  const [recentActive, setRecentActive] = useState(-1)
+  const keepRecent = (list: string[]) => { setRecent(list); try { localStorage.setItem(recentKey, JSON.stringify(list)) } catch { /* private mode */ } }
+  const addRecent = (text: string) => {
+    const x = text.trim()
+    if (x.length < 2) return
+    setRecent((cur) => {
+      const list = [x, ...cur.filter((r) => r.toLowerCase() !== x.toLowerCase())].slice(0, 10)
+      try { localStorage.setItem(recentKey, JSON.stringify(list)) } catch { /* private mode */ }
+      return list
+    })
+  }
+  const removeRecent = (x: string) => {
+    keepRecent(recent.filter((r) => r !== x))
+    setRecentActive((a) => Math.min(a, recentShown.length - 2))
+  }
+  const qn = q.trim().toLowerCase()
+  const recentShown = qn ? recent.filter((r) => r.toLowerCase().includes(qn) && r.toLowerCase() !== qn) : recent
+  const showRecent = recentOpen && recentShown.length > 0
+  // a result opened from the search: that search was a real one
+  useEffect(() => { if (location.pathname.startsWith('/doc/') && params.get('q')) addRecent(params.get('q')!) }, [location.pathname, params.get('q')])
+  const pickRecent = (x: string) => {
+    window.clearTimeout(typing.current)
+    setQ(x)
+    runSearch(x)
+    addRecent(x)
+    setRecentOpen(false) // the cursor stays in the box; typing opens the list again
+  }
+  const skipBlurRecord = useRef(false) // Esc empties and leaves the box: that search was cancelled, not made
   // reads the address bar, not React state: it also runs from the typing timer, after several renders
   const runSearch = (text: string) => {
     const onList = location.pathname === '/'
@@ -98,6 +132,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   const typing = useRef<number>()
   const onSearchChange = (v: string) => {
     setQ(v)
+    setRecentOpen(true)
+    setRecentActive(-1)
     window.clearTimeout(typing.current)
     if (!v.trim()) return leaveSearch()
     if (v.trim().length < 2) return // one character matches almost everything: wait for the second (Enter still searches)
@@ -106,11 +142,22 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     window.clearTimeout(typing.current)
+    if (showRecent && recentActive >= 0 && recentShown[recentActive]) return pickRecent(recentShown[recentActive])
     if (!q.trim()) return leaveSearch()
     runSearch(q.trim())
+    addRecent(q)
+    setRecentOpen(false)
   }
   const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (!recentOpen) return setRecentOpen(true)
+      setRecentActive((a) => e.key === 'ArrowDown' ? Math.min(recentShown.length - 1, a + 1) : Math.max(-1, a - 1))
+      return
+    }
     if (e.key !== 'Escape') return
+    setRecentOpen(false)
+    skipBlurRecord.current = true
     e.preventDefault() // handled here: the page-wide Esc below must not end the search a second time
     window.clearTimeout(typing.current)
     setQ('')
@@ -189,9 +236,27 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         <NavLink to="/" className="logo"><Bird size={20} strokeWidth={2.2} /> <span className="logo-txt">{t('app')}</span></NavLink>
         <form className="search" onSubmit={submit}>
           <Search size={15} className="search-icon" />
-          <input ref={searchInput} value={q} onChange={(e) => onSearchChange(e.target.value)} onKeyDown={onSearchKey} placeholder={t('search')} type="search" />
+          <input ref={searchInput} value={q} onChange={(e) => onSearchChange(e.target.value)} onKeyDown={onSearchKey} placeholder={t('search')} type="search"
+            autoComplete="off" role="combobox" aria-expanded={showRecent}
+            onFocus={() => { setRecentOpen(true); setRecentActive(-1) }} onClick={() => setRecentOpen(true)}
+            onBlur={() => { setRecentOpen(false); if (q.trim() && !skipBlurRecord.current) addRecent(q); skipBlurRecord.current = false }} />
+          {showRecent && (
+            <div className="recent-pop" role="listbox">
+              <div className="recent-h">{t('recent_searches')}</div>
+              {recentShown.map((x, i) => (
+                <div key={x} role="option" aria-selected={i === recentActive} className={'recent-item' + (i === recentActive ? ' active' : '')}
+                  onMouseDown={(e) => e.preventDefault() /* keep the focus in the box */} onMouseEnter={() => setRecentActive(i)} onClick={() => pickRecent(x)}>
+                  <History size={14} className="recent-ic" />
+                  <span className="recent-t">{x}</span>
+                  {/* removing keeps the list open and the cursor in the box */}
+                  <button type="button" className="icon recent-x" title={t('remove_recent')} onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => { e.stopPropagation(); removeRecent(x) }}><X size={13} /></button>
+                </div>
+              ))}
+            </div>
+          )}
           {/* own clear button: the browser's one only shows while the box is hovered or focused */}
-          {q && <button type="button" className="icon search-clear" title={t('clear_selection')} onClick={() => { window.clearTimeout(typing.current); setQ(''); leaveSearch() }}><X size={15} /></button>}
+          {q && <button type="button" className="icon search-clear" title={t('clear_selection')} onMouseDown={() => { skipBlurRecord.current = true }} onClick={() => { window.clearTimeout(typing.current); setQ(''); leaveSearch() }}><X size={15} /></button>}
         </form>
         {/* desktop: sections in the top bar; phone (< 640px): a bottom tab bar with labels */}
         <nav className="sections">
