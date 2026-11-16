@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, DocSummary, downloadPost } from '../api'
 import { plural, useT } from '../i18n'
 import { folderPath, useStore } from '../store'
-import { DND } from '../components/Sidebar'
+import { DND, DND_DOCS } from '../components/Sidebar'
 import { setMultiDragImage } from '../components/dragGhost'
 import UploadModal, { itemsFromDrop, toUploads } from '../components/Upload'
 import { fmtMB, UpTask, useUploads } from '../components/uploads'
@@ -232,6 +232,12 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const dragStart = (e: React.DragEvent, d: DocSummary) => {
     const ids = sel.has(d.id) ? [...sel] : [d.id]
     e.dataTransfer.setData(DND, JSON.stringify({ type: 'docs', ids }))
+    e.dataTransfer.setData(DND_DOCS, '') // readable during the drag (data is not): lets Trash light up for documents only
+    // while documents are dragged the Trash tab has a larger drop area (styles: body.dragging-docs)
+    document.body.classList.add('dragging-docs')
+    const end = () => { document.body.classList.remove('dragging-docs'); window.removeEventListener('dragend', end, true); window.removeEventListener('drop', end, true) }
+    window.addEventListener('dragend', end, true)
+    window.addEventListener('drop', end, true)
     if (ids.length > 1) setMultiDragImage(e, ids.length, (e.currentTarget as HTMLElement).querySelector('.thumb img'))
   }
   // while something is selected a click on a document adds it to / removes it from the selection instead of opening it

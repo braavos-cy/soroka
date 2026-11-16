@@ -9,6 +9,7 @@ import { Menu, TextInput, useDialog } from './ui'
 import { randomTagColor } from './Pickers'
 
 export const DND = 'application/x-soroka'
+export const DND_DOCS = 'application/x-soroka-docs' // marks a drag of documents (vs. a folder)
 
 /** Inline text input used for creating / renaming in place. Enter or blur commits, Escape cancels. */
 function InlineEdit({ value, onCommit, onCancel, maxLength = 300 }: { value: string; onCommit: (v: string) => void; onCancel: () => void; maxLength?: number }) {

@@ -4,7 +4,7 @@ import { api, setUnauthHandler, User } from './api'
 import { Lang, LangCtx, makeT, useT } from './i18n'
 import { StoreProvider, useStore } from './store'
 import Login, { ChangePassword } from './pages/Login'
-import Sidebar from './components/Sidebar'
+import Sidebar, { DND, DND_DOCS } from './components/Sidebar'
 import DocumentsPage from './pages/Documents'
 import DocumentView from './pages/DocumentView'
 import ReviewPage from './pages/Review'
@@ -43,7 +43,7 @@ export default function App() {
 
 function Shell({ onLogout }: { onLogout: () => void }) {
   const { t } = useT()
-  const { user, reviewCount, rejectedNew } = useStore()
+  const { user, reviewCount, rejectedNew, toast, reload: reloadStore } = useStore()
   const nav = useNavigate()
   const [params] = useSearchParams()
   const [q, setQ] = useState(params.get('q') || '')
@@ -133,6 +133,35 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   })
+  // documents dragged from the list onto the Trash tab go to the trash (no other tab takes drops)
+  // Enter and over must both accept the drag, also when they come from the tab's icon or label: an unaccepted
+  // dragenter shows the "no drop" cursor for a moment (the flicker). Leaving into the tab's own parts is not leaving.
+  const isDocDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes(DND_DOCS)
+  const dropOff = (e: React.DragEvent) => (e.currentTarget as HTMLElement).classList.remove('drop')
+  const accept = (e: React.DragEvent) => {
+    if (!isDocDrag(e)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    ;(e.currentTarget as HTMLElement).classList.add('drop')
+  }
+  const trashDrop = {
+    onDragEnter: accept,
+    onDragOver: accept,
+    onDragLeave: (e: React.DragEvent) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dropOff(e) },
+    onDrop: async (e: React.DragEvent) => {
+      dropOff(e)
+      if (!isDocDrag(e)) return
+      e.preventDefault()
+      let ids: number[] = []
+      try { ids = JSON.parse(e.dataTransfer.getData(DND)).ids || [] } catch { return }
+      if (!ids.length) return
+      try {
+        await api('/api/documents/bulk', { body: { ids, action: 'trash' } })
+        toast(`${t('dropped_to_trash')}: ${ids.length}`)
+        reloadStore(); window.dispatchEvent(new Event('soroka:reload'))
+      } catch (err: any) { toast(err.detail) }
+    },
+  }
   // narrow screens (phones): the folder / tag pane is a drawer opened from the menu button; closes on navigation
   const [drawer, setDrawer] = useState(false)
   const loc = useLocation()
@@ -169,7 +198,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           <NavLink to="/" title={t('nav_documents')} className={() => 'nav-docs' + (loc.pathname === '/' || loc.pathname.startsWith('/doc/') ? ' active' : '')}><Files size={16} /> <span className="lbl">{t('nav_documents')}</span></NavLink>
           <NavLink to="/review" title={t('review')}><ListChecks size={16} /> <span className="lbl">{t('review')}</span>{reviewCount > 0 && <span className="badge">{reviewCount}</span>}</NavLink>
           <NavLink to="/rejected" title={t('rejected')}><ShieldX size={16} /> <span className="lbl lbl-full">{t('rejected')}</span><span className="lbl lbl-short">{t('nav_rejected')}</span>{rejectedNew > 0 && <span className="badge">{rejectedNew}</span>}</NavLink>
-          <NavLink to="/trash" title={t('trash')}><Trash2 size={16} /> <span className="lbl">{t('trash')}</span></NavLink>
+          <NavLink to="/trash" title={t('trash')} className="nav-trash" {...trashDrop}><Trash2 size={16} /> <span className="lbl">{t('trash')}</span></NavLink>
           {user.role === 'admin' && <NavLink to="/admin" title={t('admin')} className="nav-admin"><Settings size={16} /> <span className="lbl">{t('admin')}</span></NavLink>}
           <NavLink to="/account" title={t('account')}><CircleUser size={16} /> <span className="lbl">{t('account')}</span></NavLink>
         </nav>
