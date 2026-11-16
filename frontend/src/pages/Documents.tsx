@@ -44,18 +44,20 @@ function UploadCard(p: UpProps) {
   return (
     <div data-upload-id={u.id} className={'doc-card upload-card' + (p.selected ? ' sel' : '') + ' up-' + u.state} onClick={p.onToggle}>
       <input type="checkbox" className="chk" checked={p.selected} onClick={(e) => e.stopPropagation()} onChange={p.onToggle} />
+      {/* everything about the upload sits in the picture area, the body holds only the name: the card is exactly
+          as tall as the document card that replaces it, so nothing around it moves at the hand-over */}
       <div className="thumb up-thumb">
-        {u.state === 'paused' ? <Pause size={28} /> : <UploadIcon size={28} />}
+        {u.state === 'paused' ? <Pause size={24} /> : <UploadIcon size={24} />}
         <div className="up-pct">{u.state === 'saving' ? t('up_saving') : `${pct}%`}</div>
         <div className="progress"><div style={{ width: `${pct}%` }} /></div>
         <div className="small muted">{fmtMB(u.sent)} / {fmtMB(u.size)} MB</div>
+        <div className="row up-actions">
+          <span className={'small ' + (u.state === 'error' ? 'danger-text' : 'muted')} title={upStatus(u, t)}>{upStatus(u, t)}</span>
+          <UpButtons {...p} />
+        </div>
       </div>
       <div className="body">
         <div className="card-title"><FileName name={u.name} className="t" /></div>
-        <div className="row up-actions">
-          <span className={'small ' + (u.state === 'error' ? 'danger-text' : 'muted')} title={upStatus(u, t)}>{upStatus(u, t)}</span>
-          <span className="spacer" /><UpButtons {...p} />
-        </div>
       </div>
     </div>
   )
@@ -203,7 +205,13 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const upToggle = (id: string) => { const s = new Set(upSel); s.has(id) ? s.delete(id) : s.add(id); setUpSel(s) }
   // uploads in progress: only in the main list, only those going to the folder shown; optional state filter
   const upFilter = params.get('upload') || ''
-  const upVisible = view !== 'active' ? [] : uploads.tasks.filter((u) =>
+  // a saved upload's card gives way to its document card the moment the list shows that document (no gap)
+  const listed = new Set(items.map((d) => d.id))
+  const shownUp = (u: UpTask) => !!u.docIds && u.docIds.some((id) => listed.has(id))
+  // and from then on that upload is finished with (it must not come back if the document leaves the list)
+  const handedIds = uploads.tasks.filter(shownUp).map((u) => u.id).join(',')
+  useEffect(() => { if (handedIds) uploads.handedOver(handedIds.split(',')) }, [handedIds])
+  const upVisible = view !== 'active' ? [] : uploads.tasks.filter((u) => !shownUp(u) &&
     (params.get('folder') === 'none' ? u.folder == null : params.get('folder') ? u.folder === Number(params.get('folder')) : true) &&
     (upFilter === 'uploading' ? ['queued', 'uploading', 'saving'].includes(u.state)
       : upFilter === 'paused' ? u.state === 'paused' : upFilter === 'failed' ? u.state === 'error' : true))

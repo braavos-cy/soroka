@@ -26,6 +26,9 @@ export type UpTask = {
   sessions: (string | null)[] // server upload session per file
   done: number[] // bytes confirmed by the server per file
   gen: number // run generation: a resume starts a new run, an older run still winding down must not touch the task
+  /** set once saved: the documents it became. The card stays (as "saving") until the list shows them, so the
+   *  upload card turns into the document card without an empty moment in between */
+  docIds?: number[]
 }
 export type NewUpload = Pick<UpTask, 'files' | 'path' | 'folder' | 'tagIds' | 'combine' | 'low'>
 
@@ -35,6 +38,7 @@ type Ctx = {
   pause: (ids: string[]) => void
   resume: (ids: string[]) => void
   cancel: (ids: string[]) => Promise<void>
+  handedOver: (ids: string[]) => void
 }
 const UploadsCtx = createContext<Ctx>(null as any)
 export const useUploads = () => useContext(UploadsCtx)
@@ -139,7 +143,13 @@ export function UploadsProvider({ children }: { children: React.ReactNode }) {
       fd.append('upload_ids', JSON.stringify(task.sessions))
       const r = await api('/api/ingest', { form: fd })
       if (r.duplicates?.length && !r.document_ids?.length) toast(`${t('duplicates')}: ${task.name}`)
-      remove(task.id)
+      if (r.document_ids?.length) {
+        // hand over to the document card: the list hides this card once it shows the documents (see Documents);
+        // removed here a little later in any case (a list that does not show them: other folder, filters)
+        task.docIds = r.document_ids
+        render()
+        window.setTimeout(() => remove(task.id), 15000)
+      } else remove(task.id)
       reload(); window.dispatchEvent(new Event('soroka:reload'))
     } catch (e: any) {
       if (e instanceof Stopped) return  // paused or cancelled: state already set by pause()/cancel()
@@ -153,7 +163,8 @@ export function UploadsProvider({ children }: { children: React.ReactNode }) {
   }, [render, reload, toast, t])
 
   const pump = useCallback(() => {
-    let active = tasks.current.filter((x) => x.state === 'uploading' || x.state === 'saving').length
+    // a saved task waiting for its document card to appear (docIds) no longer takes a slot
+    let active = tasks.current.filter((x) => !x.docIds && (x.state === 'uploading' || x.state === 'saving')).length
     for (const task of tasks.current) {
       if (active >= PARALLEL) break
       if (task.state === 'queued') { active++; run(task) }
@@ -196,15 +207,25 @@ export function UploadsProvider({ children }: { children: React.ReactNode }) {
       api(`/api/uploads/${s}`, { method: 'DELETE' }).catch(() => {}))))
   }, [pump])
 
+  /** Saved uploads whose documents the list now shows: done with. (Kept any longer, a card would come back if
+   *  the document then leaves the list, e.g. moved to the trash while it is still being processed.) */
+  const handedOver = useCallback((ids: string[]) => {
+    const done = ids.filter((id) => find(id)?.docIds)
+    if (!done.length) return
+    tasks.current = tasks.current.filter((x) => !done.includes(x.id))
+    done.forEach((id) => xhrs.current.delete(id))
+    render()
+  }, [render])
+
   // closing or reloading the tab loses the files (the browser does not keep them): warn while uploads are open
   useEffect(() => {
-    const h = (e: BeforeUnloadEvent) => { if (tasks.current.length) { e.preventDefault(); e.returnValue = '' } }
+    const h = (e: BeforeUnloadEvent) => { if (tasks.current.some((x) => !x.docIds)) { e.preventDefault(); e.returnValue = '' } }
     window.addEventListener('beforeunload', h)
     return () => window.removeEventListener('beforeunload', h)
   }, [])
 
   // task objects are mutated in place; every progress tick re-renders this provider with a fresh array
-  const value: Ctx = { tasks: [...tasks.current], add, pause, resume, cancel }
+  const value: Ctx = { tasks: [...tasks.current], add, pause, resume, cancel, handedOver }
   return <UploadsCtx.Provider value={value}>{children}</UploadsCtx.Provider>
 }
 

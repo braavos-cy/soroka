@@ -202,12 +202,26 @@ const BUSY = ['queued', 'processing']
  *  last thumbnail stays visible with a spinner on top; with no thumbnail yet a placeholder says what is going on. */
 export function PageThumb({ pageId, v, status }: { pageId: number | null | undefined; v: string | null | undefined; status?: string }) {
   const { t } = useT()
+  const want = pageId && v ? `/api/pages/${pageId}/image?variant=thumb&v=${v}` : null
+  // what is on screen: a new version is fetched in the background and swapped in once it has loaded, so the
+  // card never goes blank while processing replaces the thumbnail (it used to blink at every stage)
+  const [shown, setShown] = useState<string | null>(want)
   const [err, setErr] = useState(false)
-  useEffect(() => setErr(false), [pageId, v])
+  // a thumbnail there from the start loads lazily as usual; one that arrives later (processing finished) or
+  // changes is loaded first, so the placeholder / old picture never gives way to an empty box
+  useEffect(() => {
+    if (!want || want === shown) return
+    let live = true
+    const img = new Image()
+    img.onload = () => { if (live) { setShown(want); setErr(false) } }
+    img.onerror = () => { if (live) { setShown(want); setErr(true) } }
+    img.src = want
+    return () => { live = false }
+  }, [want])
   const busy = !!status && BUSY.includes(status)
-  if (pageId && v && !err) return (
+  if (shown && !err) return (
     <>
-      <img loading="lazy" src={`/api/pages/${pageId}/image?variant=thumb&v=${v}`} alt="" draggable={false} onError={() => setErr(true)} />
+      <img loading="lazy" src={shown} alt="" draggable={false} onError={() => setErr(true)} />
       {busy && <span className="thumb-busy"><Loader2 size={18} className="spin" /></span>}
     </>
   )
