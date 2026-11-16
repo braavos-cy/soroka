@@ -15,6 +15,7 @@ DEFAULTS: dict[str, Any] = {
     "lockout_attempts": 5,
     "lockout_minutes": 15,
     "tag_max_length": 40,  # whole tag name incl. spaces and "parent/child" path
+    "chat_reactions": True,  # bots react to messages: saved / rejected (per-chat switch: registered_chat.reactions)
     # pipeline thresholds (fusion weights live in pipeline config; these are the user-facing ones)
     "accept_doc_threshold": 0.55,
     "accept_reject_threshold": 0.30,

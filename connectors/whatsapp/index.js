@@ -1,5 +1,7 @@
 // Soroka WhatsApp connector (Baileys, MIT; depends on libsignal GPL-3.0 — isolated container).
-// Listen-only: never sends messages, reactions, read receipts or presence. Talks to the core API only.
+// Never sends text messages, read receipts or presence. Talks to the core API only.
+// What it does in a chat: reacts to a message once it was saved or rejected (can be switched off globally and
+// per chat), and leaves a group when an admin asks for it in the admin UI.
 import makeWASocket, {
   useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion,
   getContentType, jidNormalizedUser, isJidGroup, Browsers,
@@ -48,7 +50,62 @@ async function refreshConfig() {
   try {
     const c = await core('GET', `/api/connector/config?platform=${PLATFORM}`)
     config = { chats: new Map(c.chats.map(x => [x.chat_id, x])), codes: new Set(c.registration_codes) }
+    if (c.command === 'logout') return relink('logout requested from admin UI')
+    await processLeaves(c.leave_chats || [])
+    processReactions(c.reactions || []) // not awaited: paced sending must not hold up config refreshes
   } catch (e) { log.warn({ err: e.message }, 'config refresh failed') }
+}
+
+// The core decides which message gets which reaction (saved / rejected) and whether reactions are switched on;
+// here they are only delivered: one attempt each, spaced out, then taken off the core's queue.
+let reacting = false
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+async function processReactions(list) {
+  if (reacting || !list.length || state.status !== 'connected') return
+  reacting = true
+  const done = []
+  try {
+    for (const r of list) {
+      if (state.status !== 'connected') break
+      const key = { remoteJid: r.chat_id, id: r.message_id, fromMe: false }
+      if (isJidGroup(r.chat_id) && r.sender_id) key.participant = r.sender_id
+      try { await sock.sendMessage(r.chat_id, { react: { text: r.emoji, key } }) }
+      catch (e) { log.warn({ err: e.message, chat: r.chat_id }, 'reaction failed') }
+      done.push(r.event_id)
+      await sleep(1000 + Math.random() * 2000)
+    }
+  } finally {
+    try { if (done.length) await core('POST', '/api/connector/reactions-sent', { platform: PLATFORM, event_ids: done }) }
+    catch (e) { log.warn({ err: e.message }, 'reactions-sent report failed') }
+    reacting = false
+  }
+}
+
+// Leave requests come only from the admin UI (never from chat messages). One attempt per request: the core
+// drops the request when we report a failure.
+const leaving = new Set() // in flight
+const left = new Set() // left, but the report to the core has not gone through yet
+async function processLeaves(ids) {
+  if (state.status !== 'connected') return
+  for (const chatId of ids) {
+    if (leaving.has(chatId)) continue
+    leaving.add(chatId)
+    let error = ''
+    try {
+      if (!left.has(chatId)) {
+        if (!isJidGroup(chatId)) throw new Error('not a group chat')
+        await sock.groupLeave(chatId)
+        left.add(chatId)
+        log.info({ chatId }, 'left chat on admin request')
+      }
+    } catch (e) { error = e.message || 'leave failed'; log.warn({ chatId, err: error }, 'leaving chat failed') }
+    try {
+      await core('POST', '/api/connector/left-chat', { platform: PLATFORM, chat_id: chatId, error })
+      left.delete(chatId)
+      if (!error) for (const m of [config.chats, groupNames, textBuffer, pendingAfter]) m.delete(chatId)
+    } catch (e) { log.warn({ err: e.message }, 'left-chat report failed') }
+    finally { leaving.delete(chatId) }
+  }
 }
 
 function setState(status, detail = '', qr = null) {
@@ -254,16 +311,34 @@ async function sendSeen(list) {
 }
 
 // ------------------------------------------------------------------ connection
-async function relink(reason) {
+let relinking = false
+async function relink(reason, unlinkOnPhone = true) {
+  if (relinking) return
+  relinking = true
   log.warn({ reason }, 'relinking: clearing session')
-  try { await sock?.logout() } catch {}
-  try { sock?.end(undefined) } catch {}
-  // AUTH_DIR is a volume mount point: the directory itself cannot be removed (EBUSY), only its contents
+  const s = sock
+  sock = null // from here on, events of the old socket are ignored (see the handlers in start)
   try {
-    for (const f of fs.readdirSync(AUTH_DIR)) fs.rmSync(`${AUTH_DIR}/${f}`, { recursive: true, force: true })
-  } catch (e) { if (e.code !== 'ENOENT') log.error({ err: e.message }, 'could not clear the session') }
-  setState('disconnected', reason)
-  setTimeout(start, 1000)
+    const me = s?.authState?.creds?.me?.id
+    if (unlinkOnPhone && s && me) {
+      // Baileys' own logout() closes the socket without waiting for WhatsApp to take the request, so the phone
+      // kept listing the device. query() waits for the answer.
+      try {
+        await s.query({ tag: 'iq', attrs: { to: 's.whatsapp.net', type: 'set', xmlns: 'md' },
+          content: [{ tag: 'remove-companion-device', attrs: { jid: me, reason: 'user_initiated' } }] }, 8000)
+        log.info('device unlinked on the phone')
+      } catch (e) { log.warn({ err: e.message }, 'unlink request failed: remove the device on the phone by hand') }
+    }
+    try { s?.end(undefined) } catch {}
+    // AUTH_DIR is a volume mount point: the directory itself cannot be removed (EBUSY), only its contents
+    try {
+      for (const f of fs.readdirSync(AUTH_DIR)) fs.rmSync(`${AUTH_DIR}/${f}`, { recursive: true, force: true })
+    } catch (e) { if (e.code !== 'ENOENT') log.error({ err: e.message }, 'could not clear the session') }
+    groupNames.clear(); textBuffer.clear(); pendingAfter.clear()
+    lastGroupFetch = 0 // the next account's groups are reported as soon as it connects
+    setState('disconnected', reason)
+  } finally { relinking = false }
+  start()
 }
 
 let starting = false
@@ -273,7 +348,7 @@ async function start() {
   try {
     const { state: auth, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }))
-    sock = makeWASocket({
+    const s = sock = makeWASocket({
       version, auth, logger: blog,
       browser: Browsers.ubuntu('Chrome'),
       markOnlineOnConnect: false, // no presence
@@ -283,6 +358,7 @@ async function start() {
     })
     sock.ev.on('creds.update', saveCreds)
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+      if (s !== sock) return // a socket that relink() already replaced
       if (qr) setState('qr', 'scan the QR code with the bot phone: WhatsApp > Linked devices', qr)
       if (connection === 'open') {
         setState('connected', '')
@@ -295,7 +371,7 @@ async function start() {
         if (code === DisconnectReason.loggedOut || code === 403) {
           setState('logged_out', `logged out or banned (code ${code}). Re-link with a QR code.`)
           starting = false
-          return relink(`logged_out ${code}`)
+          return relink(`logged_out ${code}`, false) // WhatsApp already dropped the device
         }
         setState('disconnected', `code ${code} ${msg}`.trim())
         starting = false
@@ -320,6 +396,6 @@ async function start() {
 
 if (!TOKEN) { log.error('CONNECTOR_TOKEN missing'); process.exit(1) }
 await refreshConfig()
-setInterval(refreshConfig, 15000)
+setInterval(refreshConfig, 5000) // also carries admin commands (unlink, leave), so keep it short
 setInterval(reportStatus, 20000)
 start()

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session as DB
 
 from .. import models as m
+from .. import reactions
 from ..db import get_db, now
 from ..deps import Principal, audit, client_ip, connector, ingest_principal
 from ..ingest import InFile, IngestMeta, IngestRejected, ingest
@@ -91,6 +92,16 @@ class StatusIn(BaseModel):
     qr: str | None = None
 
 
+def forget_chats(db: DB, platform: str, reason: str, user_id: int | None = None) -> None:
+    """The linked account is gone: drop its group list and its chat registrations. Caller commits."""
+    db.query(m.SeenChat).filter_by(platform=platform).delete()
+    names = [r.chat_name or r.chat_id for r in db.query(m.RegisteredChat).filter_by(platform=platform)]
+    if names:
+        db.query(m.RegisteredChat).filter_by(platform=platform).delete()
+        db.add(m.AuditLog(user_id=user_id, action="chats_unregistered", target=platform,
+                          details={"reason": reason, "chats": names[:100]}))
+
+
 @router.post("/connector/status")
 def connector_status(body: StatusIn, p: Principal = Depends(connector), db: DB = Depends(get_db)):
     acc = db.query(m.ConnectorAccount).filter_by(platform=body.platform).one_or_none()
@@ -99,7 +110,13 @@ def connector_status(body: StatusIn, p: Principal = Depends(connector), db: DB =
         db.add(acc)
     prev = acc.status
     acc.status, acc.status_detail, acc.qr = body.status, body.detail[:2000], body.qr
-    if body.self_id:
+    # Unlinked (waiting for a QR scan) or another account linked: the previous account's chats no longer apply,
+    # registered ones included (documents stay).
+    # An empty self_id alone means nothing: the connector also sends it while it is starting or reconnecting.
+    unlinked = not body.self_id and body.status in ("qr", "logged_out")
+    if unlinked or (body.self_id and acc.self_id and body.self_id != acc.self_id):
+        forget_chats(db, body.platform, "account unlinked" if unlinked else "another account linked")
+    if body.self_id or unlinked:
         acc.self_id, acc.self_name = body.self_id, body.self_name
     acc.last_seen_at = now()
     if prev != body.status:
@@ -119,9 +136,56 @@ def connector_config(platform: str, p: Principal = Depends(connector), db: DB = 
     codes = db.query(m.RegistrationCode).filter(m.RegistrationCode.platform == platform,
                                                 m.RegistrationCode.expires_at > now(),
                                                 m.RegistrationCode.used_chat_id.is_(None)).all()
-    return {"chats": [{"chat_id": c.chat_id, "mode": c.mode, "ctx_before": c.ctx_before, "ctx_after": c.ctx_after,
+    leave = db.query(m.SeenChat).filter(m.SeenChat.platform == platform, m.SeenChat.leave_pending()).all()
+    cmd = None
+    acc = db.query(m.ConnectorAccount).filter_by(platform=platform).one_or_none()
+    if acc is not None and acc.pending_command:  # handed over once (the status report can deliver it too)
+        cmd, acc.pending_command = acc.pending_command, None
+        db.commit()
+    return {"command": cmd, "chats": [{"chat_id": c.chat_id, "mode": c.mode, "ctx_before": c.ctx_before, "ctx_after": c.ctx_after,
                        "ctx_minutes": c.ctx_minutes} for c in chats],
-            "registration_codes": [c.code for c in codes]}
+            "registration_codes": [c.code for c in codes],
+            "leave_chats": [s.chat_id for s in leave],
+            "reactions": reactions.pending(db, platform)}
+
+
+class ReactionsSentIn(BaseModel):
+    platform: str
+    event_ids: list[int]
+
+
+@router.post("/connector/reactions-sent")
+def reactions_sent(body: ReactionsSentIn, p: Principal = Depends(connector), db: DB = Depends(get_db)):
+    """The connector tried these reactions (one attempt each, delivered or not): take them off the queue."""
+    reactions.mark_sent(db, body.platform, body.event_ids)
+    db.commit()
+    return {"ok": True}
+
+
+class LeftIn(BaseModel):
+    platform: str
+    chat_id: str
+    error: str = ""
+
+
+@router.post("/connector/left-chat")
+def left_chat(body: LeftIn, p: Principal = Depends(connector), db: DB = Depends(get_db)):
+    """Result of an admin's leave request. Only chats with a request are touched, so the connector cannot
+    unregister chats on its own. On failure the request is dropped (no retries: repeated group queries risk a ban)."""
+    s = db.query(m.SeenChat).filter_by(platform=body.platform, chat_id=body.chat_id).one_or_none()
+    if s is None or s.leave_requested_at is None:
+        raise HTTPException(404)
+    details = {"platform": body.platform, "name": s.chat_name}
+    if body.error:
+        s.leave_requested_at = None
+        db.add(m.AuditLog(action="chat_leave_failed", target=body.chat_id,
+                          details={**details, "error": body.error[:500]}))
+    else:
+        db.query(m.RegisteredChat).filter_by(platform=body.platform, chat_id=body.chat_id).delete()
+        db.delete(s)
+        db.add(m.AuditLog(action="chat_left", target=body.chat_id, details=details))
+    db.commit()
+    return {"ok": True}
 
 
 class SeenIn(BaseModel):

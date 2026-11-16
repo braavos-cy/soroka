@@ -9,7 +9,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import Text, cast, func, or_
 from sqlalchemy.orm import Session as DB
 
 from .. import appsettings
@@ -135,14 +135,20 @@ def put_settings(body: dict, request: Request, p: Principal = Depends(admin), db
 
 # ---------------------------------------------------------------- audit log
 @router.get("/audit")
-def audit_log(offset: int = 0, limit: int = 100, action: str = "", p: Principal = Depends(admin),
+def audit_log(offset: int = 0, limit: int = 50, q: str = "", p: Principal = Depends(admin),
               db: DB = Depends(get_db)):
-    q = db.query(m.AuditLog, m.User.email).outerjoin(m.User, m.User.id == m.AuditLog.user_id)
-    if action:
-        q = q.filter(m.AuditLog.action.ilike(f"%{action}%"))
-    rows = q.order_by(m.AuditLog.id.desc()).offset(offset).limit(min(limit, 500)).all()
-    return [{"id": a.id, "at": a.at, "user": email, "action": a.action, "target": a.target, "details": a.details,
-             "ip": a.ip} for a, email in rows]
+    """One page of the log, newest first. `q` matches any field: user, action, target, details, IP, date."""
+    query = db.query(m.AuditLog, m.User.email).outerjoin(m.User, m.User.id == m.AuditLog.user_id)
+    for word in q.split()[:8]:  # every word must appear somewhere in the row
+        like = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        query = query.filter(or_(*[c.ilike(like, escape="\\") for c in (
+            m.AuditLog.action, m.AuditLog.target, m.AuditLog.ip, m.User.email,
+            cast(m.AuditLog.details, Text), cast(m.AuditLog.at, Text))]))
+    total = query.count()
+    rows = query.order_by(m.AuditLog.id.desc()).offset(max(0, offset)).limit(max(1, min(limit, 200))).all()
+    return {"total": total, "items": [
+        {"id": a.id, "at": a.at, "user": email, "action": a.action, "target": a.target, "details": a.details,
+         "ip": a.ip} for a, email in rows]}
 
 
 # ---------------------------------------------------------------- connectors
@@ -155,7 +161,8 @@ def connectors(p: Principal = Depends(admin), db: DB = Depends(get_db)):
         out.append({"platform": platform, "status": "offline" if stale else acc.status,
                     "reported_status": acc.status if acc else None, "detail": acc.status_detail if acc else "",
                     "self_id": acc.self_id if acc else "", "self_name": acc.self_name if acc else "",
-                    "qr": acc.qr if acc and not stale else None, "last_seen_at": acc.last_seen_at if acc else None})
+                    "qr": acc.qr if acc and not stale else None,
+                    "unlinking": bool(acc and acc.pending_command == "logout" and not stale), "last_seen_at": acc.last_seen_at if acc else None})
     return out
 
 
@@ -166,6 +173,8 @@ def connector_logout(platform: str, request: Request, p: Principal = Depends(adm
     if acc is None:
         raise HTTPException(404)
     acc.pending_command = "logout"
+    from .ingest import forget_chats
+    forget_chats(db, platform, "unlinked by admin", p.user_id)  # the account's chats go with it
     audit(db, p, "connector_logout", platform, client_ip(request))
     db.commit()
     return {"ok": True}
@@ -177,15 +186,45 @@ def chats(p: Principal = Depends(admin), db: DB = Depends(get_db)):
     regkeys = {(r.platform, r.chat_id) for r in reg}
     seen = db.query(m.SeenChat).order_by(m.SeenChat.last_seen_at.desc()).all()
     counts = dict(db.query(m.IngestEvent.chat_id, func.count()).group_by(m.IngestEvent.chat_id).all())
+    cutoff = now() - m.LEAVE_TTL
+    leaving = {(s.platform, s.chat_id) for s in seen if s.leave_requested_at and s.leave_requested_at > cutoff}
     return {
         "registered": [{"id": r.id, "platform": r.platform, "chat_id": r.chat_id, "chat_name": r.chat_name,
                         "folder_id": r.folder_id, "tag_ids": r.tag_ids, "ctx_before": r.ctx_before,
                         "ctx_after": r.ctx_after, "ctx_minutes": r.ctx_minutes, "mode": r.mode, "active": r.active,
-                        "events": counts.get(r.chat_id, 0)} for r in reg],
+                        "reactions": r.reactions, "events": counts.get(r.chat_id, 0), "leaving": (r.platform, r.chat_id) in leaving}
+                       for r in reg],
         "unregistered": [{"platform": s.platform, "chat_id": s.chat_id, "chat_name": s.chat_name,
-                          "is_group": s.is_group, "last_seen_at": s.last_seen_at}
+                          "is_group": s.is_group, "last_seen_at": s.last_seen_at,
+                          "leaving": (s.platform, s.chat_id) in leaving}
                          for s in seen if (s.platform, s.chat_id) not in regkeys],
     }
+
+
+class LeaveIn(BaseModel):
+    platform: str
+    chat_id: str
+
+
+@router.post("/chats/leave")
+def leave_chat(body: LeaveIn, request: Request, p: Principal = Depends(admin), db: DB = Depends(get_db)):
+    """Make the bot leave a group chat. The connector picks the request up with its next config poll, leaves,
+    and reports back (/api/connector/left-chat); the chat is then unregistered. Documents are kept."""
+    s = db.query(m.SeenChat).filter_by(platform=body.platform, chat_id=body.chat_id).one_or_none()
+    r = db.query(m.RegisteredChat).filter_by(platform=body.platform, chat_id=body.chat_id).one_or_none()
+    if s is None:
+        if r is None:
+            raise HTTPException(404)
+        s = m.SeenChat(platform=r.platform, chat_id=r.chat_id, chat_name=r.chat_name)  # registered by code
+        db.add(s)
+    acc = db.query(m.ConnectorAccount).filter_by(platform=body.platform).one_or_none()
+    if acc is None or acc.status != "connected" or acc.last_seen_at is None \
+            or now() - acc.last_seen_at > timedelta(minutes=2):
+        raise HTTPException(409, "connector_offline")
+    s.leave_requested_at = now()
+    audit(db, p, "chat_leave_requested", s.chat_id, client_ip(request), platform=s.platform, name=s.chat_name)
+    db.commit()
+    return {"ok": True}
 
 
 class ChatIn(BaseModel):
@@ -199,6 +238,7 @@ class ChatIn(BaseModel):
     ctx_minutes: int = 10
     mode: str = "auto"
     active: bool = True
+    reactions: bool = True
 
 
 @router.post("/chats")
@@ -219,7 +259,7 @@ def _apply_chat(r: m.RegisteredChat, body: ChatIn) -> None:
     r.ctx_before, r.ctx_after = max(0, min(50, body.ctx_before)), max(0, min(50, body.ctx_after))
     r.ctx_minutes = max(0, min(120, body.ctx_minutes))
     r.mode = body.mode if body.mode in ("auto", "override") else "auto"
-    r.active = body.active
+    r.active, r.reactions = body.active, body.reactions
 
 
 @router.put("/chats/{cid}")

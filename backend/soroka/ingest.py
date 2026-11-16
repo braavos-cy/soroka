@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session as DB
 
 from . import models as m
+from . import reactions
 from .formats import sniff
 from .jobs import enqueue_document
 from .storage import storage
@@ -190,6 +191,8 @@ def ingest(db: DB, meta: IngestMeta, files: list[InFile], uploaded_by: int | Non
             for t in tag_ids:
                 db.add(m.DocumentTag(document_id=doc.id, tag_id=t))
             created.append(doc.id)
+    if duplicates and not created:
+        reactions.queue(db, ev, reactions.SAVED)  # already stored: same answer to the sender as a fresh save
     db.commit()
     for d in created:
         enqueue_document(d, meta.priority)

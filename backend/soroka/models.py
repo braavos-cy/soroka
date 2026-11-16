@@ -1,6 +1,6 @@
 """Data model (requirements §10). Single shared workspace; permission hooks can be added later
 (e.g. a folder_acl table) without changing these tables."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text,
@@ -108,7 +108,18 @@ class SeenChat(Base):
     chat_name: Mapped[str] = mapped_column(String(300), default="")
     is_group: Mapped[bool] = mapped_column(Boolean, default=True)
     last_seen_at: Mapped[datetime] = ts(default=now)
+    leave_requested_at: Mapped[datetime | None] = ts()  # admin asked the bot to leave; see LEAVE_TTL
     __table_args__ = (UniqueConstraint("platform", "chat_id"),)
+
+    @staticmethod
+    def leave_pending():
+        """Filter: leave requests the connector should still carry out."""
+        return SeenChat.leave_requested_at > now() - LEAVE_TTL
+
+
+# A leave request not picked up in this time (connector offline) is dropped, so the bot never leaves a chat
+# unexpectedly long after the admin clicked.
+LEAVE_TTL = timedelta(minutes=10)
 
 
 class RegisteredChat(Base):
@@ -124,6 +135,7 @@ class RegisteredChat(Base):
     ctx_minutes: Mapped[int] = mapped_column(Integer, default=10)
     mode: Mapped[str] = mapped_column(String(20), default="auto")  # auto | override
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    reactions: Mapped[bool] = mapped_column(Boolean, default=True)  # bot reacts to saved / rejected messages
     created_at: Mapped[datetime] = ts(default=now)
     __table_args__ = (UniqueConstraint("platform", "chat_id"),)
 
@@ -166,6 +178,10 @@ class IngestEvent(Base):
     extra: Mapped[dict] = mapped_column(JSON, default=dict)  # email: to, cc, subject ...
     forced: Mapped[bool] = mapped_column(Boolean, default=False)
     force_reason: Mapped[str] = mapped_column(String(50), default="")
+    # bot reaction to the source message (see reactions.py): emoji, when queued, when the connector delivered it
+    reaction: Mapped[str | None] = mapped_column(String(16))
+    reaction_at: Mapped[datetime | None] = ts()
+    reaction_sent_at: Mapped[datetime | None] = ts()
 
 
 class FileOriginal(Base):

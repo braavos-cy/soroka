@@ -64,7 +64,15 @@ Services: `db` (Postgres), `redis`, `api` (FastAPI), `worker` ×2 (RQ: queues hi
 3. Force-save (silent): mention the bot in the caption, reply to a file mentioning the bot, or forward a file to the bot's private chat.
 4. "Unlink / re-link" logs out and shows a new QR code (e.g. after a ban, with a new number).
 
-The connector never sends messages, reactions, read receipts or presence. Delivery receipts (grey ticks) are sent by the
+5. "Leave chat" (admins only, next to each chat): the bot leaves the group and the chat is unregistered; saved
+   documents stay. Group members see the usual "left" notice. Nobody can make the bot leave from inside the chat.
+
+6. Reactions: the bot reacts to a message once its outcome is known — ✅ saved (also for a file that is already
+   stored), ❌ rejected as a non-document. One reaction per message; a later rescue or manual reject does not change it.
+   Switch off for everything in Admin → Settings, or per chat in the chat's settings. Note that anything the bot
+   sends raises the WhatsApp ban risk compared with staying fully silent.
+
+The connector never sends text messages, read receipts or presence. Delivery receipts (grey ticks) are sent by the
 protocol automatically and cannot be disabled.
 
 ### Bulk import

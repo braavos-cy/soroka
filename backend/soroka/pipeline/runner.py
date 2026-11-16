@@ -21,6 +21,7 @@ from sqlalchemy import text as sa_text
 
 from .. import appsettings
 from .. import models as m
+from .. import reactions
 from ..config import settings
 from ..db import SessionLocal, now
 from ..jobs import enqueue_document, enqueue_page
@@ -612,6 +613,7 @@ def finalize_document(document_id: int) -> None:
         all_image = pages and all(p.kind == "image" for p in pages)
         if all_image and not forced and not manual_doc and accept and all(a == "non_document" for a in accept):
             _reject(db, doc, "classified_non_document")
+            reactions.on_finalized(db, doc)
             db.commit()
             return
         build_document_pdf(db, doc)
@@ -619,6 +621,7 @@ def finalize_document(document_id: int) -> None:
             doc.status = "error" if errors and len(errors) == len(pages) else "ready"
             doc.status_detail = f"{len(errors)} page(s) failed" if errors else ""
         index_document(db, doc)
+        reactions.on_finalized(db, doc)
         db.commit()
     finally:
         db.close()
