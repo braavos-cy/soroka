@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight, Folder as FolderIcon, FolderOpen, FolderPlus, Inbox, Library, Merge, Minus, Pencil, Plus, Settings2, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Folder as FolderIcon, FolderOpen, Home as HomeIcon, Inbox, Library, Merge, Minus, Pencil, Plus, Settings2, Trash2 } from 'lucide-react'
 import { api, Folder, Tag } from '../api'
 import { useT } from '../i18n'
 import { useStore } from '../store'
@@ -40,6 +40,7 @@ export default function Sidebar() {
   const nav = useNavigate()
   const loc = useLocation()
   const [open, setOpen] = useState<Record<number, boolean>>({})
+  const [homeOpen, setHomeOpen] = useState(true) // "Home": the root every top-level folder hangs from
   const [editing, setEditing] = useState<number | null>(null)
   const [newTag, setNewTag] = useState(false)
   const [manage, setManage] = useState(false)
@@ -63,6 +64,7 @@ export default function Sidebar() {
     const byId = new Map(folders.map((f) => [f.id, f]))
     const up: Record<number, boolean> = {}
     for (let p = byId.get(sel)?.parent_id, n = 0; p != null && n < 100; p = byId.get(p)?.parent_id, n++) up[p] = true
+    setHomeOpen(true)
     if (Object.keys(up).length) setOpen((o) => ({ ...o, ...up }))
     requestAnimationFrame(() => document.querySelectorAll('.sidebar .tree-item.sel').forEach((el) => el.scrollIntoView({ block: 'nearest' })))
   }, [sel, folders, loc.pathname])
@@ -88,7 +90,7 @@ export default function Sidebar() {
     for (let i = 2; taken.has(name); i++) name = `${base} ${i}`
     try {
       const r = await api('/api/folders', { body: { name, parent_id: parent } })
-      if (parent) setOpen((o) => ({ ...o, [parent]: true }))
+      if (parent) setOpen((o) => ({ ...o, [parent]: true })); else setHomeOpen(true)
       setEditing(r.id)
       reload()
     } catch (e: any) { toast(e.detail) }
@@ -150,7 +152,7 @@ export default function Sidebar() {
             {!isEditing && <span className="cnt">{f.count || ''}</span>}
             {!isEditing && (
               <span className="acts" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-                <button className="icon" title={t('new_subfolder')} onClick={() => createFolder(f.id)}><FolderPlus size={15} /></button>
+                <button className="icon" title={t('new_subfolder')} onClick={() => createFolder(f.id)}><Plus size={15} /></button>
                 <button className="icon" title={t('rename')} onClick={() => setEditing(f.id)}><Pencil size={14} /></button>
                 <button className="icon danger" title={t('delete')} onClick={() => del(f)}><Trash2 size={14} /></button>
               </span>
@@ -187,10 +189,16 @@ export default function Sidebar() {
         <span className="caret" /><span className="ti-icon"><Inbox size={16} /></span><span className="name">{t('not_in_folders')}</span><span className="cnt">{unfiledTotal || ''}</span>
       </div>
       <div className="side-sep" />
-      {renderTree(null, 0)}
-      <div className="tree-item new-folder" style={{ paddingLeft: 4 }} onClick={() => createFolder(null)}>
-        <span className="caret" /><span className="ti-icon"><FolderPlus size={16} /></span><span className="name">{t('new_folder')}</span>
+      {/* Home: the root of the folder tree. A click folds / unfolds it; hover shows "+" for a new top-level folder;
+          a folder dropped here moves to the top level */}
+      <div className="tree-item" style={{ paddingLeft: 4 }} onClick={() => setHomeOpen(!homeOpen)} {...dropProps(null)}>
+        <span className="caret">{(children.get(null) || []).length > 0 && (homeOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}</span>
+        <span className="ti-icon"><HomeIcon size={16} /></span><span className="name">{t('home')}</span>
+        <span className="acts" onClick={(e) => e.stopPropagation()}>
+          <button className="icon" title={t('new_folder')} onClick={() => createFolder(null)}><Plus size={15} /></button>
+        </span>
       </div>
+      {homeOpen && renderTree(null, 1)}
       <div className="side-h">
         <span>{t('tags')}</span>
         <span className="row" style={{ gap: 0 }}>

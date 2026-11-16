@@ -61,9 +61,6 @@ h1, h2, h3 { margin: 0 0 12px; } h2 { font-size: 18px; } h3 { font-size: 15px; }
 .side-resizer:hover, body.resizing .side-resizer { background: var(--accent); opacity: .5; }
 body.resizing { cursor: col-resize; user-select: none; }
 .topbar .side-toggle { margin-right: -4px; }
-.tree-item.new-folder { color: var(--muted); opacity: .55; font-size: 13px; }
-.tree-item.new-folder .ti-icon { color: inherit; }
-.tree-item.new-folder:hover { opacity: 1; color: var(--text); }
 .content { overflow: auto; min-height: 0; }
 .page-pad { padding: 16px 20px; }
 
