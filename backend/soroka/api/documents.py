@@ -111,11 +111,9 @@ def list_documents(
     if sender or chat:
         qry = qry.join(m.IngestEvent, m.IngestEvent.id == m.Document.ingest_event_id)
         if sender:
-            like = f"%{sender}%"
-            qry = qry.filter(or_(m.IngestEvent.sender_name.ilike(like), m.IngestEvent.sender_phone.ilike(like),
-                                 m.IngestEvent.sender_email.ilike(like), m.IngestEvent.sender_username.ilike(like)))
+            qry = qry.filter(_sender_match(sender))
         if chat:
-            qry = qry.filter(m.IngestEvent.chat_name.ilike(f"%{chat}%"))
+            qry = qry.filter(m.IngestEvent.chat_name.ilike(_like(chat), escape="\\"))
     if received_from:
         qry = qry.filter(m.Document.received_at >= _date(received_from))
     if received_to:
@@ -166,6 +164,58 @@ def list_documents(
         items.append({**doc_summary(d, *fp.get(d.id, (None, None)),
                                     snippet=" … ".join(h["text"] for h in hits[:2]) or None), "hits": hits})
     return {"total": total, "terms": terms, "items": items}
+
+
+def _like(s: str) -> str:
+    """Contains-pattern for ILIKE: the typed text matches anywhere ("ant" finds "Antoniy" and "Anton");
+    % and _ are taken literally."""
+    return "%" + s.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def _sender_match(s: str):
+    like = _like(s)
+    return or_(*[c.ilike(like, escape="\\") for c in (m.IngestEvent.sender_name, m.IngestEvent.sender_phone,
+                                                      m.IngestEvent.sender_email, m.IngestEvent.sender_username)])
+
+
+@router.get("/documents/suggest")
+def suggest(field: str, q: str = "", limit: int = Query(20, le=100), p: Principal = Depends(ui_user),
+            db: DB = Depends(get_db)):
+    """Values offered by the Sender and Chat filters while typing: those present on (non-trashed, non-rejected)
+    documents that contain the typed text, most used first, with how many documents each has."""
+    alive = and_(m.Document.ingest_event_id == m.IngestEvent.id, m.Document.trashed_at.is_(None),
+                 m.Document.status != "rejected")
+    n = func.count(m.Document.id.distinct())
+    if field == "chat":
+        qry = db.query(m.IngestEvent.chat_name, n).join(m.Document, alive).filter(m.IngestEvent.chat_name != "")
+        if q.strip():
+            qry = qry.filter(m.IngestEvent.chat_name.ilike(_like(q), escape="\\"))
+        rows = qry.group_by(m.IngestEvent.chat_name).order_by(n.desc(), m.IngestEvent.chat_name).limit(limit).all()
+        return [{"value": name, "label": name, "count": c} for name, c in rows]
+    if field == "sender":
+        qry = db.query(m.IngestEvent.sender_name, m.IngestEvent.sender_phone, m.IngestEvent.sender_email, n) \
+            .join(m.Document, alive)
+        if q.strip():
+            qry = qry.filter(_sender_match(q))
+        rows = qry.group_by(m.IngestEvent.sender_name, m.IngestEvent.sender_phone, m.IngestEvent.sender_email).all()
+        # one entry per name (or phone / e-mail when there is no name); the filter matches any of them
+        merged: dict[str, dict] = {}
+        for name, phone, email, c in rows:
+            value = name or phone or email
+            if not value:
+                continue
+            e = merged.setdefault(value, {"value": value, "label": value, "count": 0, "extra": set()})
+            e["count"] += c
+            for x in (phone, email):
+                if x and x != value:
+                    e["extra"].add(x)
+        out = sorted(merged.values(), key=lambda e: (-e["count"], e["value"].casefold()))[:limit]
+        for e in out:
+            extra = sorted(e.pop("extra"))
+            if extra:
+                e["label"] = f"{e['value']} · {', '.join(extra[:2])}"
+        return out
+    raise HTTPException(400, "bad_field")
 
 
 def page_summary(p: m.Page) -> dict:

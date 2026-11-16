@@ -225,6 +225,101 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
   )
 })
 
+// ---------------------------------------------------------------- combo box
+export type ComboOption = { value: string; label: string; count?: number }
+
+/** A text field with suggestions: typing shows matching options (fetched by `load`), but any typed text is
+ *  accepted too (a partial value matches more than one option). Commits on Enter, on picking an option and when
+ *  the field loses focus; Arrow keys move through the options, Esc closes them. */
+export function Combo({ value, onCommit, load, placeholder, className }: {
+  value: string
+  onCommit: (v: string) => void
+  load: (q: string) => Promise<ComboOption[]>
+  placeholder?: string
+  className?: string
+}) {
+  const { t } = useT()
+  const [text, setText] = useState(value)
+  const [open, setOpen] = useState(false)
+  const [opts, setOpts] = useState<ComboOption[]>([])
+  const [loading, setLoading] = useState(false)
+  const [active, setActive] = useState(-1) // -1: none, Enter takes the typed text
+  const [pos, setPos] = useState<React.CSSProperties>({})
+  const input = useRef<HTMLInputElement>(null)
+  const pop = useRef<HTMLDivElement>(null)
+  const seq = useRef(0)
+  useEffect(() => setText(value), [value])
+
+  // suggestions for what is typed, a moment after the last key; an older answer never replaces a newer one
+  useEffect(() => {
+    if (!open) return
+    const n = ++seq.current
+    setLoading(true)
+    const h = window.setTimeout(() => {
+      load(text.trim()).then((r) => { if (n === seq.current) { setOpts(r); setActive(-1) } })
+        .catch(() => { if (n === seq.current) setOpts([]) })
+        .finally(() => { if (n === seq.current) setLoading(false) })
+    }, 200)
+    return () => window.clearTimeout(h)
+  }, [text, open])
+
+  const place = useCallback(() => {
+    const r = input.current?.getBoundingClientRect()
+    if (!r) return
+    const below = window.innerHeight - r.bottom - 8, above = r.top - 8
+    const up = below < 220 && above > below
+    const style: React.CSSProperties = { minWidth: Math.max(r.width, 200), maxHeight: Math.min(340, up ? above : below), left: Math.min(r.left, window.innerWidth - 220) }
+    if (up) style.bottom = window.innerHeight - r.top + 4; else style.top = r.bottom + 4
+    setPos(style)
+  }, [])
+  useLayoutEffect(() => { if (open) place() }, [open, place])
+  useEffect(() => {
+    if (!open) return
+    const onMove = (e: Event) => { if (!pop.current?.contains(e.target as Node)) setOpen(false) }
+    window.addEventListener('resize', onMove)
+    window.addEventListener('scroll', onMove, true)
+    return () => { window.removeEventListener('resize', onMove); window.removeEventListener('scroll', onMove, true) }
+  }, [open])
+  useEffect(() => { pop.current?.querySelector('.dd-item.active')?.scrollIntoView({ block: 'nearest' }) }, [active])
+
+  const commit = (v: string) => { setText(v); setOpen(false); if (v.trim() !== value) onCommit(v.trim()) }
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); if (!open) setOpen(true); else setActive((a) => Math.min(opts.length - 1, a + 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(-1, a - 1)) }
+    else if (e.key === 'Enter') { e.preventDefault(); commit(active >= 0 && opts[active] ? opts[active].value : text) }
+    else if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); setOpen(false) } // only closes the list
+  }
+
+  return (
+    <>
+      <TextInput ref={input} small wrapClassName={className} placeholder={placeholder} value={text} autoComplete="off"
+        role="combobox" aria-expanded={open} aria-autocomplete="list"
+        onChange={(e) => { setText(e.target.value); setOpen(true); if (!e.target.value && value) commit('') /* the clear (×) button */ }}
+        onFocus={() => setOpen(true)} onClick={() => setOpen(true)}
+        onBlur={() => { if (text.trim() !== value) commit(text); else setOpen(false) }}
+        onKeyDown={onKey} />
+      {open && createPortal(
+        <div ref={pop} className="dd-pop" style={pos}>
+          <div className="dd-list" role="listbox">
+            {opts.map((o, n) => (
+              <div key={o.value} role="option" aria-selected={o.value === value}
+                className={'dd-item' + (n === active ? ' active' : '')}
+                onMouseEnter={() => setActive(n)} onMouseDown={(e) => e.preventDefault() /* keep focus in the field */}
+                onClick={() => commit(o.value)}>
+                <span className="dd-label">{o.label}</span>
+                {o.count != null && <span className="dd-count">{o.count}</span>}
+                {o.value === value && <Check size={14} className="dd-check" />}
+              </div>
+            ))}
+            {!opts.length && <div className="dd-empty">{loading ? t('loading') : t('nothing_found')}</div>}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  )
+}
+
 // ---------------------------------------------------------------- dialogs
 type ConfirmOpts = { title: string; message?: React.ReactNode; ok?: string; danger?: boolean }
 type PromptOpts = { title: string; label?: string; value?: string; ok?: string; placeholder?: string; mono?: boolean }

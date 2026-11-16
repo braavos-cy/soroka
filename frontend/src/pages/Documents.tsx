@@ -8,7 +8,7 @@ import { setMultiDragImage } from '../components/dragGhost'
 import UploadModal, { itemsFromDrop, toUploads } from '../components/Upload'
 import { fmtMB, UpTask, useUploads } from '../components/uploads'
 import { DateRange, FileName, FolderMenu, fmtDate, PageThumb, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
-import { Select, useDialog } from '../components/ui'
+import { Combo, Select, useDialog } from '../components/ui'
 import { ArchiveRestore, ArrowDownUp, Files, Download, LayoutGrid, List, Pause, Play, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
 
 const PAGE = 60
@@ -354,10 +354,10 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
             onFrom={(v) => setParam('received_from', v)} onTo={(v) => setParam('received_to', v)} />
           <DateRange label={t('doc_date')} from={params.get('date_from') || ''} to={params.get('date_to') || ''}
             onFrom={(v) => setParam('date_from', v)} onTo={(v) => setParam('date_to', v)} />
+          {/* pick a sender / chat from the list, or type part of a name: "ant" finds every sender containing it */}
           {(['sender', 'chat'] as const).map((k) => (
-            <input key={k + (params.get(k) || '')} type="search" className="text-filter" placeholder={t(k)} defaultValue={params.get(k) || ''}
-              onBlur={(e) => e.target.value !== (params.get(k) || '') && setParam(k, e.target.value.trim())}
-              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
+            <Combo key={k} className="text-filter" placeholder={t(k)} value={params.get(k) || ''} onCommit={(v) => setParam(k, v)}
+              load={(q) => api(`/api/documents/suggest?field=${k}&q=${encodeURIComponent(q)}`)} />
           ))}
           {activeFilters > 0 && <button className="link reset-filters" onClick={resetFilters}><X size={14} /> {t('reset_filters')}</button>}
         </div>
