@@ -161,8 +161,17 @@ export default function DocumentView() {
           {doc.status === 'rejected' && <button className="primary" onClick={() => post(`/api/documents/${doc.id}/rescue`)}>{t('rescue')}</button>}
           {trashed && <button onClick={restore}><ArchiveRestore size={15} /> <span className="lbl-phone-hide">{t('restore')}</span></button>}
           <Menu icon={<Download size={15} />} label={t('download')} align="right" className="dl-btn" title={t('download')}
-            items={[...(doc.has_pdf ? [{ key: 'pdf', label: t('processed_pdf') }] : []), { key: 'original', label: t('original') }, { key: 'text', label: t('plain_text') }]}
-            onSelect={(k) => window.open(`/api/documents/${doc.id}/download?kind=${k}`, '_blank')} />
+            items={[...(doc.has_pdf ? [{ key: 'pdf', label: t('processed_pdf') }] : []), { key: 'original', label: t('original') }, { key: 'text', label: t('plain_text') },
+              // the page open in the viewer, on its own
+              ...(page?.has_image ? [{ key: 'page:image', label: t('this_page_image') + (multi ? ` (${pageIdx + 1})` : '') }] : []),
+              ...(page?.has_page_pdf ? [{ key: 'page:pdf', label: t('this_page_pdf') + (multi ? ` (${pageIdx + 1})` : '') }] : [])]}
+            onSelect={(k) => {
+              if (k.startsWith('page:')) {
+                const name = multi ? `${doc.title} - ${t('page').toLowerCase()} ${pageIdx + 1}` : doc.title
+                return window.open(`/api/pages/${page.id}/download?kind=${k.slice(5)}&name=${encodeURIComponent(name)}`, '_blank')
+              }
+              window.open(`/api/documents/${doc.id}/download?kind=${k}`, '_blank')
+            }} />
           {more.length > 0 && <Menu icon={<MoreHorizontal size={16} />} caret={false} align="right" title={t('more_actions')} items={more} onSelect={onMore} />}
         </div>
       </div>

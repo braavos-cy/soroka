@@ -502,6 +502,25 @@ def page_image(page_id: int, variant: str = "render", p: Principal = Depends(ui_
     return resp
 
 
+@router.get("/pages/{page_id}/download")
+def page_download(page_id: int, kind: str = "image", name: str = "", p: Principal = Depends(ui_user),
+                  db: DB = Depends(get_db)):
+    """One page on its own: the processed page image, or its one-page searchable PDF. `name` is the file name
+    without extension (the document title and page number, as the viewer shows them)."""
+    pg = _get_page(db, page_id)
+    base = _safe_name(name or f"page-{pg.id}")
+    if kind == "pdf":
+        if not pg.pdf_key:
+            raise HTTPException(404, "not_ready")
+        return _file_response(pg.pdf_key, base + ".pdf", "application/pdf")
+    if kind == "image":
+        if not pg.render_key:
+            raise HTTPException(404, "not_ready")
+        ext = os.path.splitext(pg.render_key)[1] or ".jpg"
+        return _file_response(pg.render_key, base + ext, "image/png" if ext == ".png" else "image/jpeg")
+    raise HTTPException(400, "bad_kind")
+
+
 @router.get("/pages/{page_id}/flatten-source")
 def flatten_source(page_id: int, p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
     """The cropped page before flattening (what the flattening mesh is drawn on in the editor), max 2000 px."""
@@ -532,6 +551,7 @@ def get_page(page_id: int, p: Principal = Depends(ui_user), db: DB = Depends(get
         "history": [{"id": v.id, "version": v.version, "manual": v.created_by is not None, "note": v.note,
                      "created_at": v.created_at, "current": rec is not None and v.id == rec.id} for v in versions],
         "stages_detail": pg.stages or {}, "text": pg.text,
+        "has_image": bool(pg.render_key), "has_page_pdf": bool(pg.pdf_key),
         "render_url": f"/api/pages/{pg.id}/image?variant=render&v={(pg.render_key or '').split('-')[-1]}",
         "original_url": f"/api/pages/{pg.id}/image?variant=original" if pg.original_key else None,
         "flatten_source_url": (f"/api/pages/{pg.id}/flatten-source?v={rec.version if rec else 0}"
