@@ -56,6 +56,17 @@ export default function DocumentView() {
   useEffect(() => { loadDoc() }, [loadDoc])
   // a page number from the address that the document does not have (pages removed since): the last page
   useEffect(() => { if (doc?.pages?.length && pageIdx >= doc.pages.length) setPageIdx(doc.pages.length - 1) }, [doc?.pages?.length, pageIdx])
+  // keep the open page's thumbnail in sight (opened at a search occurrence's page, or moved to another page);
+  // scrolls only the strip, never the window, and only when the thumbnail is not already fully visible
+  const thList = useRef<HTMLDivElement>(null)
+  const hasDoc = !!doc
+  useEffect(() => {
+    const list = thList.current, el = list?.querySelector<HTMLElement>('.th.sel')
+    if (!list || !el) return
+    const l = list.getBoundingClientRect(), r = el.getBoundingClientRect()
+    if (r.top < l.top || r.bottom > l.bottom) list.scrollTop += r.top - l.top - (l.height - r.height) / 2
+    if (r.left < l.left || r.right > l.right) list.scrollLeft += r.left - l.left - (l.width - r.width) / 2
+  }, [pageIdx, hasDoc, thFilter])
   const pageSummary = doc?.pages?.[pageIdx]
   const loadPage = useCallback(() => { if (pageSummary) api(`/api/pages/${pageSummary.id}`).then(setPage) }, [pageSummary?.id])
   useEffect(() => { setPage(null); setMode('result'); setPreview(null); loadPage() }, [pageSummary?.id])
@@ -158,7 +169,7 @@ export default function DocumentView() {
                 onClick={() => pickCat(activeCat === k ? null : k)}><span className="dot" />{catLabel(t, k)} <b>{n}</b></button>
             ))}
           </div>
-          <div className="th-list">
+          <div className="th-list" ref={thList}>
             {doc.pages.map((p: any, i: number) => (activeCat && pageCat(p) !== activeCat) ? null : (
               <div key={p.id} className={'th' + (i === pageIdx ? ' sel' : '')} onClick={() => setPageIdx(i)} title={`${t('page')} ${i + 1}`}>
                 <div className="th-img"><PageThumb pageId={p.id} v={p.thumb_v} status={p.status} /></div>
