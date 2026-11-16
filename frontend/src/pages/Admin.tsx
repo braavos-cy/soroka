@@ -7,7 +7,7 @@ import { useStore } from '../store'
 import { Modal, QR } from '../components/Reauth'
 import { FolderSelect, fmtBytes, fmtDate, TagAdder, TagChips } from '../components/Pickers'
 import { Select, useDialog } from '../components/ui'
-import { CheckCircle2, Loader2, MessageCircle, KeyRound, LockOpen, Pencil, Plug, ScrollText, Send, Server, ShieldOff, SlidersHorizontal, Trash2, UserCheck, UserX, Users as UsersIcon } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronRight, Loader2, MessageCircle, KeyRound, LockOpen, Pencil, Plug, ScrollText, Send, Server, ShieldOff, SlidersHorizontal, Trash2, UserCheck, UserX, Users as UsersIcon } from 'lucide-react'
 
 export default function AdminPage() {
   const { t } = useT()
@@ -53,66 +53,115 @@ function Connectors() {
     }, 3000)
     return () => clearInterval(i)
   }, [code])
-  const relink = async (p: string) => { if (await dlg.confirm({ title: t('relink') + '?', message: t('relink_confirm'), ok: t('relink'), danger: true })) { await api(`/api/admin/connectors/${p}/logout`, { method: 'POST' }); toast('OK') } }
+  const relink = async (p: string) => { if (await dlg.confirm({ title: t('relink') + '?', message: t('relink_confirm'), ok: t('relink'), danger: true })) { await api(`/api/admin/connectors/${p}/logout`, { method: 'POST' }); load() } }
   const unregister = async (c: any) => { if (await dlg.confirm({ title: `${t('unregister')} «${c.chat_name || c.chat_id}»?`, ok: t('unregister'), danger: true })) { await api(`/api/admin/chats/${c.id}`, { method: 'DELETE' }); load() } }
+  const leave = async (c: any) => {
+    if (!await dlg.confirm({ title: `${t('leave_chat')} «${c.chat_name || c.chat_id}»?`, message: t('leave_chat_confirm'), ok: t('leave_chat'), danger: true })) return
+    try { await api('/api/admin/chats/leave', { body: { platform: c.platform, chat_id: c.chat_id } }); load() } catch (e: any) { toast(errText(t, e.detail)) }
+  }
+  const leaveBtn = (c: any) => c.leaving
+    ? <span className="small muted icon-text"><Loader2 size={14} className="spin" /> {t('leaving')}</span>
+    : <button className="link danger" onClick={() => leave(c)}>{t('leave_chat')}</button>
   const statusColor: Record<string, string> = { connected: 'high', qr: 'medium', offline: 'low', disconnected: 'low', logged_out: 'low' }
+  // expanded state per connector: the admin's choice if they made one, otherwise open unless the connector is offline
+  const [open, setOpen] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem('conn_open') || '{}') } catch { return {} } })
+  const isOpen = (c: any) => open[c.platform] ?? c.status !== 'offline'
+  const toggle = (c: any) => {
+    const next = { ...open, [c.platform]: !isOpen(c) }
+    setOpen(next)
+    try { localStorage.setItem('conn_open', JSON.stringify(next)) } catch { /* private mode */ }
+  }
+  const newChat = (c: any) => ({ platform: c.platform, chat_id: c.chat_id, chat_name: c.chat_name, folder_id: null, tag_ids: [], ctx_before: 5, ctx_after: 5, ctx_minutes: 10, mode: 'auto', active: true, reactions: true })
   return (
-    <div className="col" style={{ gap: 16 }}>
-      <div className="row" style={{ alignItems: 'stretch' }}>
-        {conns.map((c) => (
-          <div key={c.platform} className="card col conn-card">
-            <div className="row"><h3 style={{ margin: 0 }}>{c.platform === 'whatsapp' ? 'WhatsApp' : 'Telegram'}</h3><span className="spacer" /><span className={'tier ' + (statusColor[c.status] || 'none')}>{t('conn_' + c.status).startsWith('conn_') ? c.status : t('conn_' + c.status)}</span></div>
-            {c.self_id && <div className="small">{c.self_name} {c.self_id}</div>}
-            {c.detail && <div className="small muted">{c.detail}</div>}
-            <div className="small muted">{t('last_seen')}: {fmtDate(c.last_seen_at, true) || '—'}</div>
-            {c.qr && <><div className="small">{t('scan_qr')}</div><QR value={c.qr} size={280} level="L" /></>}
-            {c.platform === 'whatsapp' && c.status !== 'offline' && <button style={{ alignSelf: 'flex-start' }} onClick={() => relink(c.platform)}>{t('relink')}</button>}
-            {c.platform === 'telegram' && c.status === 'offline' && <div className="small muted">Phase 2</div>}
-          </div>
-        ))}
-        <div className="card col conn-card">
-          <h3 style={{ margin: 0 }}>{t('registration_code')}</h3>
-          <div className="small muted">{t('registration_code_help')}</div>
-          {code ? (
-            <>
-              <div style={{ fontSize: 26, fontFamily: 'monospace', letterSpacing: 2 }}>{code.code}</div>
-              <div className="small icon-text">{code.used ? <><CheckCircle2 size={14} className="ok-text" /> {code.used}</> : <><Loader2 size={14} className="spin" /> {t('waiting')}</>}</div>
-              <button onClick={() => setCode(null)}>{t('close')}</button>
-            </>
-          ) : <button style={{ alignSelf: 'flex-start' }} onClick={async () => setCode(await api('/api/admin/registration-codes', { body: { platform: 'whatsapp' } }))}>{t('new_code')} (WhatsApp)</button>}
-        </div>
-      </div>
-      <div className="card">
-        <h3>{t('registered_chats')}</h3>
-        <table className="list">
-          <thead><tr><th>{t('chat')}</th><th>{t('folder')}</th><th>{t('tags')}</th><th>{t('mode')}</th><th>{t('context')}</th><th>#</th><th /></tr></thead>
-          <tbody>
-            {chats.registered.map((c: any) => (
-              <tr key={c.id} style={{ opacity: c.active ? 1 : 0.5 }}>
-                <td><PlatformName c={c} /></td>
-                <td><FolderLabel id={c.folder_id} /></td>
-                <td><TagChips ids={c.tag_ids} /></td>
-                <td className="small">{t('mode_' + c.mode)}</td>
-                <td className="small">-{c.ctx_before} / +{c.ctx_after} / ±{c.ctx_minutes}m</td>
-                <td className="small">{c.events}</td>
-                <td><button className="icon" title={t('edit')} onClick={() => setEditing(c)}><Pencil size={14} /></button><button className="link danger" onClick={() => unregister(c)}>{t('unregister')}</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="card">
-        <h3>{t('unregistered_chats')}</h3>
-        <table className="list"><tbody>
-          {chats.unregistered.map((c: any) => (
-            <tr key={c.platform + c.chat_id}>
-              <td><PlatformName c={c} /></td>
-              <td className="small muted">{c.chat_id}</td>
-              <td><button onClick={() => setEditing({ platform: c.platform, chat_id: c.chat_id, chat_name: c.chat_name, folder_id: null, tag_ids: [], ctx_before: 5, ctx_after: 5, ctx_minutes: 10, mode: 'auto', active: true })}>{t('register')}</button></td>
-            </tr>
-          ))}
-        </tbody></table>
-      </div>
+    <div className="conn-list">
+      {conns.map((c) => {
+        const reg = chats.registered.filter((x: any) => x.platform === c.platform)
+        const unreg = chats.unregistered.filter((x: any) => x.platform === c.platform)
+        const account = [c.self_name, c.self_id && '+' + c.self_id.split('@')[0].split(':')[0]].filter(Boolean).join(' · ')
+        const status = t('conn_' + c.status).startsWith('conn_') ? c.status : t('conn_' + c.status)
+        const expanded = isOpen(c)
+        return (
+          <section key={c.platform} className="card conn">
+            <button className="conn-head" aria-expanded={expanded} onClick={() => toggle(c)}>
+              {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              <PlatformIcon platform={c.platform} size={18} />
+              <span className="conn-name">{c.platform === 'whatsapp' ? 'WhatsApp' : 'Telegram'}</span>
+              <span className="conn-meta">
+                {account && <span>{account}</span>}
+                <span>{t('conn_chats')}: {reg.length}</span>
+                {unreg.length > 0 && <span>{t('conn_unregistered')}: {unreg.length}</span>}
+              </span>
+              <span className={'tier ' + (statusColor[c.status] || 'none')}>{status}</span>
+            </button>
+            {expanded && (
+              <div className="conn-body">
+                <div className="row">
+                  <span className="small muted">{t('last_seen')}: {fmtDate(c.last_seen_at, true) || '—'}</span>
+                  {c.detail && <span className="small muted">{c.detail}</span>}
+                  {c.platform === 'telegram' && c.status === 'offline' && <span className="small muted">Phase 2</span>}
+                  <span className="spacer" />
+                  {c.unlinking
+                    ? <span className="small muted icon-text"><Loader2 size={14} className="spin" /> {t('unlinking')}</span>
+                    : c.platform === 'whatsapp' && c.status !== 'offline' && <button onClick={() => relink(c.platform)}>{t('relink')}</button>}
+                </div>
+                {c.qr && <div className="col"><div className="small">{t('scan_qr')}</div><QR value={c.qr} size={280} level="L" /></div>}
+
+                {c.platform === 'whatsapp' && (
+                  <div className="conn-code">
+                    {code ? (
+                      <>
+                        <span className="code">{code.code}</span>
+                        <span className="small icon-text">{code.used ? <><CheckCircle2 size={14} className="ok-text" /> {code.used}</> : <><Loader2 size={14} className="spin" /> {t('waiting')}</>}</span>
+                        <button onClick={() => setCode(null)}>{t('close')}</button>
+                      </>
+                    ) : <button onClick={async () => setCode(await api('/api/admin/registration-codes', { body: { platform: c.platform } }))}>{t('new_code')}</button>}
+                    <span className="small muted">{t('registration_code_help')}</span>
+                  </div>
+                )}
+
+                <h4>{t('registered_chats')}</h4>
+                {reg.length === 0 ? <div className="small muted">{t('conn_no_chats')}</div> : (
+                  <div className="table-scroll">
+                    <table className="list">
+                      <thead><tr><th>{t('chat')}</th><th>{t('folder')}</th><th>{t('tags')}</th><th>{t('mode')}</th><th>{t('context')}</th><th>#</th><th /></tr></thead>
+                      <tbody>
+                        {reg.map((r: any) => (
+                          <tr key={r.id} style={{ opacity: r.active ? 1 : 0.5 }}>
+                            <td>{r.chat_name || r.chat_id}</td>
+                            <td><FolderLabel id={r.folder_id} /></td>
+                            <td><TagChips ids={r.tag_ids} /></td>
+                            <td className="small">{t('mode_' + r.mode)}</td>
+                            <td className="small" title={`${t('ctx_s1')} ${r.ctx_before} ${t('ctx_s2')} ${r.ctx_after} ${t('ctx_s3')} ${r.ctx_minutes} ${t('ctx_s4')}`}>{r.ctx_before} + {r.ctx_after}, {r.ctx_minutes} {t('minutes_short')}</td>
+                            <td className="small">{r.events}</td>
+                            <td className="nowrap"><button className="icon" title={t('edit')} onClick={() => setEditing(r)}><Pencil size={14} /></button><button className="link danger" onClick={() => unregister(r)}>{t('unregister')}</button>{leaveBtn(r)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {unreg.length > 0 && (
+                  <>
+                    <h4>{t('unregistered_chats')}</h4>
+                    <div className="table-scroll">
+                      <table className="list"><tbody>
+                        {unreg.map((u: any) => (
+                          <tr key={u.chat_id}>
+                            <td>{u.chat_name || u.chat_id}</td>
+                            <td className="small muted">{u.chat_id}</td>
+                            <td className="nowrap"><button onClick={() => setEditing(newChat(u))}>{t('register')}</button>{leaveBtn(u)}</td>
+                          </tr>
+                        ))}
+                      </tbody></table>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </section>
+        )
+      })}
       {editing && <ChatEditor chat={editing} onClose={() => { setEditing(null); load() }} />}
     </div>
   )
@@ -125,8 +174,8 @@ function FolderLabel({ id }: { id: number | null }) {
   return <span className="small">{f ? f.name : <span className="muted">{t('no_folder')}</span>}</span>
 }
 
-function PlatformName({ c }: { c: any }) {
-  return <span className="icon-text">{c.platform === 'whatsapp' ? <MessageCircle size={15} className="ok-text" /> : <Send size={15} style={{ color: 'var(--accent)' }} />} {c.chat_name || c.chat_id}</span>
+function PlatformIcon({ platform, size = 15 }: { platform: string; size?: number }) {
+  return platform === 'whatsapp' ? <MessageCircle size={size} className="ok-text" /> : <Send size={size} style={{ color: 'var(--accent)' }} />
 }
 
 function ChatEditor({ chat, onClose }: { chat: any; onClose: () => void }) {
@@ -140,25 +189,39 @@ function ChatEditor({ chat, onClose }: { chat: any; onClose: () => void }) {
       onClose()
     } catch (e: any) { toast(e.detail) }
   }
+  const num = (k: 'ctx_before' | 'ctx_after' | 'ctx_minutes', max: number) => (
+    <input type="number" min={0} max={max} value={c[k]} onChange={(e) => setC({ ...c, [k]: Math.max(0, Math.min(max, Number(e.target.value))) })} />
+  )
   return (
     <Modal onClose={onClose}>
       <h2>{c.chat_name || c.chat_id}</h2>
-      <label>{t('folder')}</label>
+      <label className="choice">
+        <input type="checkbox" checked={c.active} onChange={(e) => setC({ ...c, active: e.target.checked })} />
+        <span><b>{t('chat_active')}</b><span className="hint">{t('chat_active_hint')}</span></span>
+      </label>
+
+      <label>{t('chat_place_in')}</label>
       <FolderSelect value={c.folder_id} allowEmpty onChange={(f) => setC({ ...c, folder_id: f })} />
-      <label>{t('tags')}</label>
+      <label>{t('chat_auto_tag')}</label>
       <div className="row"><TagAdder exclude={c.tag_ids} onAdd={(id) => setC({ ...c, tag_ids: [...c.tag_ids, id] })} /><TagChips ids={c.tag_ids} onRemove={(id) => setC({ ...c, tag_ids: c.tag_ids.filter((x: number) => x !== id) })} /></div>
-      <label>{t('mode')}</label>
-      <div className="seg">
-        <button className={c.mode === 'auto' ? 'active' : ''} onClick={() => setC({ ...c, mode: 'auto' })}>{t('mode_auto')}</button>
-        <button className={c.mode === 'override' ? 'active' : ''} onClick={() => setC({ ...c, mode: 'override' })}>{t('mode_override')}</button>
+
+      <label>{t('chat_what_to_save')}</label>
+      {(['auto', 'override'] as const).map((mode) => (
+        <label key={mode} className={'choice' + (c.mode === mode ? ' on' : '')}>
+          <input type="radio" name="chat-mode" checked={c.mode === mode} onChange={() => setC({ ...c, mode })} />
+          <span><b>{t('mode_' + mode)}</b><span className="hint">{t('mode_' + mode + '_hint')}</span></span>
+        </label>
+      ))}
+
+      <label>{t('chat_context')}</label>
+      <div className="ctx-sentence" title={t('chat_context_hint')}>
+        {t('ctx_s1')} {num('ctx_before', 50)} {t('ctx_s2')} {num('ctx_after', 50)} {t('ctx_s3')} {num('ctx_minutes', 120)} {t('ctx_s4')}
       </div>
-      <label>{t('context')}</label>
-      <div className="row">
-        <input type="number" min={0} max={50} value={c.ctx_before} onChange={(e) => setC({ ...c, ctx_before: Number(e.target.value) })} style={{ width: 70 }} /> {t('ctx_before')}
-        <input type="number" min={0} max={50} value={c.ctx_after} onChange={(e) => setC({ ...c, ctx_after: Number(e.target.value) })} style={{ width: 70 }} /> {t('ctx_after')}
-        <input type="number" min={0} max={120} value={c.ctx_minutes} onChange={(e) => setC({ ...c, ctx_minutes: Number(e.target.value) })} style={{ width: 70 }} /> {t('ctx_minutes')}
-      </div>
-      <label className="inline" style={{ marginTop: 10 }}><input type="checkbox" checked={c.active} onChange={(e) => setC({ ...c, active: e.target.checked })} />{t('active')}</label>
+
+      <label className="choice" style={{ marginTop: 12 }}>
+        <input type="checkbox" checked={c.reactions ?? true} onChange={(e) => setC({ ...c, reactions: e.target.checked })} />
+        <span>{t('chat_reactions_one')}</span>
+      </label>
       <div className="row" style={{ marginTop: 16 }}><span className="spacer" /><button onClick={onClose}>{t('cancel')}</button><button className="primary" onClick={save}>{t('save')}</button></div>
     </Modal>
   )
@@ -251,19 +314,42 @@ function Settings() {
 // ---------------------------------------------------------------- audit & system
 function Audit() {
   const { t } = useT()
+  const PAGE = 50
   const [rows, setRows] = useState<any[]>([])
-  const [filter, setFilter] = useState('')
-  useEffect(() => { api(`/api/admin/audit?action=${encodeURIComponent(filter)}&limit=300`).then(setRows) }, [filter])
+  const [total, setTotal] = useState(0)
+  const [input, setInput] = useState('')
+  const [q, setQ] = useState('')
+  const [page, setPage] = useState(0)
+  useEffect(() => { const i = setTimeout(() => { setQ(input.trim()); setPage(0) }, 300); return () => clearTimeout(i) }, [input])
+  useEffect(() => {
+    let stale = false
+    api(`/api/admin/audit?q=${encodeURIComponent(q)}&limit=${PAGE}&offset=${page * PAGE}`).then((r) => { if (!stale) { setRows(r.items); setTotal(r.total) } })
+    return () => { stale = true }
+  }, [q, page])
+  const pages = Math.max(1, Math.ceil(total / PAGE))
+  const pager = (
+    <div className="row small">
+      <span className="muted">{total ? `${page * PAGE + 1}–${Math.min(total, (page + 1) * PAGE)} / ${total}` : '0'}</span>
+      <span className="spacer" />
+      <button disabled={page === 0} onClick={() => setPage(0)}>«</button>
+      <button disabled={page === 0} onClick={() => setPage(page - 1)}>{t('prev')}</button>
+      <span>{page + 1} / {pages}</span>
+      <button disabled={page >= pages - 1} onClick={() => setPage(page + 1)}>{t('next')}</button>
+      <button disabled={page >= pages - 1} onClick={() => setPage(pages - 1)}>»</button>
+    </div>
+  )
   return (
-    <div className="card">
-      <div className="row"><h3 style={{ margin: 0 }}>{t('audit_log')}</h3><span className="spacer" /><input placeholder="action…" onChange={(e) => setFilter(e.target.value)} /></div>
-      <table className="list">
+    <div className="card col">
+      <div className="row"><h3 style={{ margin: 0 }}>{t('audit_log')}</h3><span className="spacer" /><input type="search" placeholder={t('search_log')} value={input} onChange={(e) => setInput(e.target.value)} style={{ width: 260, maxWidth: '100%' }} /></div>
+      {pager}
+      <div className="table-scroll"><table className="list">
         <thead><tr><th>{t('date')}</th><th>User</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>
         <tbody>{rows.map((r) => (
           <tr key={r.id}><td className="small">{fmtDate(r.at, true)}</td><td className="small">{r.user || '—'}</td><td>{r.action}</td><td className="small">{r.target}</td>
             <td className="small muted" style={{ maxWidth: 360, wordBreak: 'break-all' }}>{Object.keys(r.details || {}).length ? JSON.stringify(r.details) : ''}</td><td className="small">{r.ip}</td></tr>
         ))}</tbody>
-      </table>
+      </table></div>
+      {rows.length > 15 && pager}
     </div>
   )
 }
