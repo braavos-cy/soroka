@@ -5,7 +5,31 @@ import { Modal } from './Reauth'
 import { NewUpload, useUploads } from './uploads'
 import { Camera, FilePlus, FolderUp, UploadCloud, X } from 'lucide-react'
 
-type Item = { file: File; path: string[] } // path = sub-folders (from folder uploads / drag & drop)
+export type Item = { file: File; path: string[] } // path = sub-folders (from folder uploads / drag & drop)
+
+/** Files (and folders, with their sub-folder paths) dropped from the computer. */
+export async function itemsFromDrop(dt: DataTransfer): Promise<Item[]> {
+  // the entries must be taken before the first await: the browser empties the drop data after the event
+  const entries = Array.from(dt.items).map((i) => (i as any).webkitGetAsEntry?.()).filter(Boolean)
+  const files = Array.from(dt.files)
+  if (!entries.length) return files.map((file) => ({ file, path: [] }))
+  const out: Item[] = []
+  for (const en of entries) await readEntry(en, [], out)
+  return out
+}
+
+/** One upload per file, or with `combine` one per sub-folder holding all its files. */
+export function toUploads(items: Item[], o: { folder: number | null; tagIds: number[]; combine: boolean; low: boolean }): NewUpload[] {
+  const groups = new Map<string, Item[]>()
+  items.forEach((it) => { const k = it.path.join('/'); groups.set(k, [...(groups.get(k) || []), it]) })
+  const list: NewUpload[] = []
+  for (const group of groups.values()) {
+    const base = { ...o, path: group[0].path }
+    if (o.combine) list.push({ ...base, files: group.map((it) => it.file) })
+    else group.forEach((it) => list.push({ ...base, files: [it.file] }))
+  }
+  return list
+}
 
 async function readEntry(entry: any, path: string[], out: Item[]): Promise<void> {
   if (entry.isFile) {
@@ -44,24 +68,14 @@ export default function UploadModal({ folderId, onClose }: { folderId: number | 
     setItems((x) => [...x, ...arr])
   }
   const onDrop = async (e: React.DragEvent) => {
-    e.preventDefault(); setOver(false)
-    const out: Item[] = []
-    const entries = Array.from(e.dataTransfer.items).map((i) => (i as any).webkitGetAsEntry?.()).filter(Boolean)
-    if (entries.length) { for (const en of entries) await readEntry(en, [], out) } else addFiles(e.dataTransfer.files)
+    e.preventDefault(); e.stopPropagation(); setOver(false)
+    const out = await itemsFromDrop(e.dataTransfer)
     setItems((x) => [...x, ...out])
   }
 
   // uploads run in the background and show as cards in the document list (pause / resume / cancel there)
   const submit = () => {
-    const groups = new Map<string, Item[]>()
-    items.forEach((it) => { const k = it.path.join('/'); groups.set(k, [...(groups.get(k) || []), it]) })
-    const list: NewUpload[] = []
-    for (const group of groups.values()) {
-      const base = { path: group[0].path, folder, tagIds, combine, low }
-      if (combine) list.push({ ...base, files: group.map((it) => it.file) })
-      else group.forEach((it) => list.push({ ...base, files: [it.file] }))
-    }
-    uploads.add(list)
+    uploads.add(toUploads(items, { folder, tagIds, combine, low }))
     onClose()
   }
 

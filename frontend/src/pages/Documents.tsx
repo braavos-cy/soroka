@@ -5,7 +5,7 @@ import { plural, useT } from '../i18n'
 import { folderPath, useStore } from '../store'
 import { DND } from '../components/Sidebar'
 import { setMultiDragImage } from '../components/dragGhost'
-import UploadModal from '../components/Upload'
+import UploadModal, { itemsFromDrop, toUploads } from '../components/Upload'
 import { fmtMB, UpTask, useUploads } from '../components/uploads'
 import { DateRange, FileName, FolderMenu, fmtDate, PageThumb, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Select, useDialog } from '../components/ui'
@@ -240,6 +240,24 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const folderId = params.get('folder') ? Number(params.get('folder')) : null
   const heading = view === 'trash' ? t('trash') : view === 'rejected' ? t('rejected') : folderId ? folderPath(folders, folderId) : t('all_documents')
 
+  // files dragged in from the computer and dropped anywhere on the list: uploaded into the folder shown (as the
+  // dialog would with its defaults). Only files from outside: documents dragged within the page carry no 'Files'.
+  const [fileOver, setFileOver] = useState(false)
+  const dragDepth = useRef(0) // enter/leave fire for every child crossed: count them to know when the pointer left
+  const acceptsFiles = view === 'active' && !upload
+  const isFileDrag = (e: React.DragEvent) => acceptsFiles && Array.from(e.dataTransfer.types).includes('Files')
+  const fileDrop = {
+    onDragEnter: (e: React.DragEvent) => { if (!isFileDrag(e)) return; e.preventDefault(); dragDepth.current++; setFileOver(true) },
+    onDragOver: (e: React.DragEvent) => { if (!isFileDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy' },
+    onDragLeave: (e: React.DragEvent) => { if (!isFileDrag(e)) return; if (--dragDepth.current <= 0) { dragDepth.current = 0; setFileOver(false) } },
+    onDrop: async (e: React.DragEvent) => {
+      if (!isFileDrag(e)) return
+      e.preventDefault(); dragDepth.current = 0; setFileOver(false)
+      const items = await itemsFromDrop(e.dataTransfer)
+      if (items.length) uploads.add(toUploads(items, { folder: folderId, tagIds: [], combine: false, low: false }))
+    },
+  }
+
   const searchMode = !!params.get('q')
   // an occurrence opens the place it is in: page text -> that page with the Text tab, context -> the Info tab with
   // the field / message marked, title or file name -> just the document
@@ -273,7 +291,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     </div>
   )
   return (
-    <div className={sel.size + upSel.size > 0 ? 'has-selection' : undefined}>
+    <div className={sel.size + upSel.size > 0 ? 'has-selection' : undefined} {...fileDrop}>
       {/* while documents are selected the selection actions replace the regular toolbar (same place, same height) */}
       <div className={'toolbar' + (sel.size + upSel.size > 0 ? ' selecting' : '')}>
         {sel.size + upSel.size > 0 ? <>
@@ -344,6 +362,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
       )}
       <div ref={area} className="results" onMouseDown={startBand}>
       {band && <div className="band" style={{ left: band.x, top: band.y, width: band.w, height: band.h }} />}
+      {fileOver && <div className="file-drop"><div><UploadIcon size={28} /> {t('drop_to_upload')} <b>{heading}</b></div></div>}
       {upFilter && <div className="filters small">{t('up_filter_on')} <button className="link" onClick={() => setParam('upload', '')}><X size={13} /> {t('clear_selection')}</button></div>}
       {!loading && docsShown.length === 0 && upVisible.length === 0 && <div className="page-pad muted">{t('nothing_found')}</div>}
       {searchMode ? (
