@@ -17,7 +17,7 @@ export default function AdminPage() {
     <div className="page-pad">
       <nav className="admin-tabs">
         {([['', 'connectors', Plug], ['users', 'users', UsersIcon], ['settings', 'settings', SlidersHorizontal], ['audit', 'audit_log', ScrollText], ['system', 'system', Server]] as const).map(([p, k, Icon]) => (
-          <NavLink key={k} to={'/admin/' + p} end className={({ isActive }) => isActive ? 'active' : ''}><Icon size={15} /> {t(k)}</NavLink>
+          <NavLink key={k} to={p ? '/admin/' + p : '/admin'} end className={({ isActive }) => isActive ? 'active' : ''}><Icon size={15} /> {t(k)}</NavLink>
         ))}
       </nav>
       <Routes>
@@ -65,7 +65,7 @@ function Connectors() {
             {c.self_id && <div className="small">{c.self_name} {c.self_id}</div>}
             {c.detail && <div className="small muted">{c.detail}</div>}
             <div className="small muted">{t('last_seen')}: {fmtDate(c.last_seen_at, true) || '—'}</div>
-            {c.qr && <><div className="small">{t('scan_qr')}</div><QR value={c.qr} size={260} /></>}
+            {c.qr && <><div className="small">{t('scan_qr')}</div><QR value={c.qr} size={280} level="L" /></>}
             {c.platform === 'whatsapp' && c.status !== 'offline' && <button style={{ alignSelf: 'flex-start' }} onClick={() => relink(c.platform)}>{t('relink')}</button>}
             {c.platform === 'telegram' && c.status === 'offline' && <div className="small muted">Phase 2</div>}
           </div>
@@ -146,7 +146,7 @@ function ChatEditor({ chat, onClose }: { chat: any; onClose: () => void }) {
       <label>{t('folder')}</label>
       <FolderSelect value={c.folder_id} allowEmpty onChange={(f) => setC({ ...c, folder_id: f })} />
       <label>{t('tags')}</label>
-      <div className="row"><TagChips ids={c.tag_ids} onRemove={(id) => setC({ ...c, tag_ids: c.tag_ids.filter((x: number) => x !== id) })} /><TagAdder exclude={c.tag_ids} onAdd={(id) => setC({ ...c, tag_ids: [...c.tag_ids, id] })} /></div>
+      <div className="row"><TagAdder exclude={c.tag_ids} onAdd={(id) => setC({ ...c, tag_ids: [...c.tag_ids, id] })} /><TagChips ids={c.tag_ids} onRemove={(id) => setC({ ...c, tag_ids: c.tag_ids.filter((x: number) => x !== id) })} /></div>
       <label>{t('mode')}</label>
       <div className="seg">
         <button className={c.mode === 'auto' ? 'active' : ''} onClick={() => setC({ ...c, mode: 'auto' })}>{t('mode_auto')}</button>

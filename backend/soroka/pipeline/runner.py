@@ -247,7 +247,7 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
         # curved pages (bound books, curls) use it with flattening; flat pages and scans keep the exact 4-corner
         # crop (their outline is straight or the whole image), the outline is kept for the editor
         # not on scans (the page is the whole frame): there MobileSAM outlines the text area instead of the page
-        is_scan = chosen.method == "full_frame" and sig.get("flat_scan", 0.0) > 0.7
+        is_scan = chosen.method in ("full_frame", "blank_border") and sig.get("flat_scan", 0.0) > 0.7
         polygon, page_mask = (None, {"reason": "scan"}) if is_scan else PM.page_outline(orig)
         if polygon:
             bend = PM.outline_bend(polygon)

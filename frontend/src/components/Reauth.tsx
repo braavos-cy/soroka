@@ -48,8 +48,16 @@ export function Modal({ children, onClose, wide, small }: { children: React.Reac
   )
 }
 
-export function QR({ value, size = 220 }: { value: string; size?: number }) {
+/** QR code as a vector image: sharp at any size (a bitmap scaled to a non-integer module size scans badly),
+ *  with the 4-module quiet zone scanners expect; never wider than its container. */
+export function QR({ value, size = 220, level = 'M' }: { value: string; size?: number; level?: 'L' | 'M' | 'Q' | 'H' }) {
   const [src, setSrc] = useState('')
-  useEffect(() => { QRCode.toDataURL(value, { width: size, margin: 1 }).then(setSrc) }, [value, size])
-  return src ? <div className="qr"><img src={src} width={size} height={size} alt="QR" /></div> : null
+  useEffect(() => {
+    let live = true
+    QRCode.toString(value, { type: 'svg', margin: 4, errorCorrectionLevel: level })
+      .then((svg) => { if (live) setSrc('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)) })
+      .catch(() => { if (live) setSrc('') })
+    return () => { live = false }
+  }, [value, level])
+  return src ? <div className="qr" style={{ width: size }}><img src={src} alt="QR" /></div> : null
 }
