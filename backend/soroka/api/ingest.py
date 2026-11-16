@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session as DB
 
 from .. import models as m
-from .. import reactions
+from .. import appsettings, reactions
 from ..db import get_db, now
 from ..deps import Principal, audit, client_ip, connector, ingest_principal
 from ..ingest import InFile, IngestMeta, IngestRejected, ingest
@@ -145,6 +145,8 @@ def connector_config(platform: str, p: Principal = Depends(connector), db: DB = 
     return {"command": cmd, "chats": [{"chat_id": c.chat_id, "mode": c.mode, "ctx_before": c.ctx_before, "ctx_after": c.ctx_after,
                        "ctx_minutes": c.ctx_minutes} for c in chats],
             "registration_codes": [c.code for c in codes],
+            # secret word that activates a person's private chat ("" = private chats cannot be activated)
+            "private_code": appsettings.private_code(db, platform),
             "leave_chats": [s.chat_id for s in leave],
             "reactions": reactions.pending(db, platform)}
 
@@ -214,6 +216,31 @@ class CodeSeenIn(BaseModel):
     code: str
     chat_id: str
     chat_name: str = ""
+
+
+class PrivateActivateIn(BaseModel):
+    platform: str
+    code: str
+    chat_id: str
+    chat_name: str = ""
+
+
+@router.post("/connector/private-activate")
+def private_activate(body: PrivateActivateIn, p: Principal = Depends(connector), db: DB = Depends(get_db)):
+    """A person sent the secret word in their private chat with the bot: from now on files they send are saved.
+    The word is checked here again; the chat shows in the admin UI with the registered ones (removable there)."""
+    secret = appsettings.normalize_code(appsettings.private_code(db, body.platform))
+    if not secret or appsettings.normalize_code(body.code) != secret or body.chat_id.endswith("@g.us"):
+        raise HTTPException(403, "wrong_code")
+    reg = db.query(m.RegisteredChat).filter_by(platform=body.platform, chat_id=body.chat_id).one_or_none()
+    if reg is None:
+        reg = m.RegisteredChat(platform=body.platform, chat_id=body.chat_id, ctx_before=0, ctx_after=0)
+        db.add(reg)
+    reg.chat_name, reg.active = body.chat_name[:300], True
+    db.add(m.AuditLog(action="private_chat_activated", target=body.chat_id,
+                      details={"platform": body.platform, "chat_name": body.chat_name}))
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/connector/registration-code")

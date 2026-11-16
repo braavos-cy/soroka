@@ -26,6 +26,22 @@ DEFAULTS: dict[str, Any] = {
 LIMITS: dict[str, tuple[int, int]] = {"tag_max_length": (1, 300)}
 
 
+def private_code_key(platform: str) -> str:
+    """Setting holding the secret word that activates a person's private chat with the bot. Kept out of DEFAULTS:
+    it is a secret (not on the generic settings page, not in the settings-change audit) and edited on the connector."""
+    return f"{platform}_private_code"
+
+
+def private_code(db: DB, platform: str) -> str:
+    row = db.get(m.Setting, private_code_key(platform))
+    return str(row.value or "") if row is not None else ""
+
+
+def normalize_code(s: str) -> str:
+    """Comparison form of a secret word: case, surrounding and repeated spaces do not matter."""
+    return " ".join((s or "").split()).casefold()
+
+
 def get(db: DB, key: str) -> Any:
     row = db.get(m.Setting, key)
     return row.value if row is not None else DEFAULTS.get(key)

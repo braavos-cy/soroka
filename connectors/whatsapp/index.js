@@ -1,7 +1,8 @@
 // Soroka WhatsApp connector (Baileys, MIT; depends on libsignal GPL-3.0 — isolated container).
 // Never sends text messages, read receipts or presence. Talks to the core API only.
 // What it does in a chat: reacts to a message once it was saved or rejected (can be switched off globally and
-// per chat), and leaves a group when an admin asks for it in the admin UI.
+// per chat), confirms a private chat activated with the secret word (✅ reaction), and leaves a group when an
+// admin asks for it in the admin UI.
 import makeWASocket, {
   useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion,
   getContentType, jidNormalizedUser, isJidGroup, Browsers,
@@ -21,7 +22,7 @@ const BUFFER_MAX = 60
 
 let sock = null
 let state = { status: 'starting', detail: '', qr: null }
-let config = { chats: new Map(), codes: new Set() }
+let config = { chats: new Map(), codes: new Set(), privateCode: '' }
 const textBuffer = new Map() // chatId -> [{id, sender, sender_name, time, text}]
 const pendingAfter = new Map() // chatId -> [{eventId, deadline, remaining}]
 
@@ -49,7 +50,7 @@ async function reportStatus() {
 async function refreshConfig() {
   try {
     const c = await core('GET', `/api/connector/config?platform=${PLATFORM}`)
-    config = { chats: new Map(c.chats.map(x => [x.chat_id, x])), codes: new Set(c.registration_codes) }
+    config = { chats: new Map(c.chats.map(x => [x.chat_id, x])), codes: new Set(c.registration_codes), privateCode: c.private_code || '' }
     if (c.command === 'logout') return relink('logout requested from admin UI')
     await processLeaves(c.leave_chats || [])
     processReactions(c.reactions || []) // not awaited: paced sending must not hold up config refreshes
@@ -258,6 +259,20 @@ async function onMessage(msg) {
       await core('POST', '/api/connector/registration-code', { platform: PLATFORM, code, chat_id: chatId, chat_name: await chatNameOf(chatId) })
       log.info({ chatId }, 'chat registered by code'); await refreshConfig()
     } catch (e) { log.warn({ err: e.message }, 'code registration failed') }
+    return
+  }
+
+  // a person's private chat counts only once activated with the secret word (set in the admin UI): otherwise
+  // anybody could flood the archive. The word must be the whole message; the bot confirms with a reaction only.
+  if (!isGroup && !reg) {
+    const norm = (s) => s.split(/\s+/).filter(Boolean).join(' ').toLowerCase()
+    if (!config.privateCode || !text || norm(text) !== norm(config.privateCode)) return
+    try {
+      await core('POST', '/api/connector/private-activate', { platform: PLATFORM, code: text, chat_id: chatId, chat_name: msg.pushName || '' })
+      log.info({ chatId }, 'private chat activated')
+      await refreshConfig()
+      try { await sock.sendMessage(chatId, { react: { text: '✅', key: msg.key } }) } catch (e) { log.warn({ err: e.message }, 'activation reaction failed') }
+    } catch (e) { log.warn({ err: e.message }, 'private activation failed') }
     return
   }
 

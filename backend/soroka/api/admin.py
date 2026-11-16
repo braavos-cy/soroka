@@ -162,8 +162,32 @@ def connectors(p: Principal = Depends(admin), db: DB = Depends(get_db)):
                     "reported_status": acc.status if acc else None, "detail": acc.status_detail if acc else "",
                     "self_id": acc.self_id if acc else "", "self_name": acc.self_name if acc else "",
                     "qr": acc.qr if acc and not stale else None,
-                    "unlinking": bool(acc and acc.pending_command == "logout" and not stale), "last_seen_at": acc.last_seen_at if acc else None})
+                    "unlinking": bool(acc and acc.pending_command == "logout" and not stale), "last_seen_at": acc.last_seen_at if acc else None,
+                    "private_code": appsettings.private_code(db, platform)})
     return out
+
+
+class PrivateCodeIn(BaseModel):
+    code: str = ""
+
+
+@router.put("/connectors/{platform}/private-code")
+def set_private_code(platform: str, body: PrivateCodeIn, request: Request, p: Principal = Depends(admin),
+                     db: DB = Depends(get_db)):
+    """The secret word a person sends to the bot to activate their private chat ("" = no new activations).
+    Chats activated before stay active: deactivate them in the chat list. The word itself is not logged."""
+    if platform not in ("whatsapp", "telegram"):
+        raise HTTPException(404)
+    code = " ".join(body.code.split())[:100]
+    key = appsettings.private_code_key(platform)
+    row = db.get(m.Setting, key)
+    if row is None:
+        db.add(m.Setting(key=key, value=code))
+    else:
+        row.value = code
+    audit(db, p, "private_code_changed", platform, client_ip(request), enabled=bool(code))
+    db.commit()
+    return {"private_code": code}
 
 
 @router.post("/connectors/{platform}/logout")

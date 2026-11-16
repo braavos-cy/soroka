@@ -7,7 +7,7 @@ import { useStore } from '../store'
 import { Modal, QR } from '../components/Reauth'
 import { FolderSelect, fmtBytes, fmtDate, TagAdder, TagChips } from '../components/Pickers'
 import { Select, useDialog } from '../components/ui'
-import { CheckCircle2, ChevronDown, ChevronRight, Loader2, MessageCircle, KeyRound, LockOpen, Pencil, Plug, ScrollText, Send, Server, ShieldOff, SlidersHorizontal, Trash2, UserCheck, UserX, Users as UsersIcon } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, MessageCircle, KeyRound, LockOpen, Pencil, Plug, ScrollText, Send, Server, ShieldOff, SlidersHorizontal, Trash2, UserCheck, UserX, Users as UsersIcon } from 'lucide-react'
 
 export default function AdminPage() {
   const { t } = useT()
@@ -59,7 +59,8 @@ function Connectors() {
     if (!await dlg.confirm({ title: `${t('leave_chat')} «${c.chat_name || c.chat_id}»?`, message: t('leave_chat_confirm'), ok: t('leave_chat'), danger: true })) return
     try { await api('/api/admin/chats/leave', { body: { platform: c.platform, chat_id: c.chat_id } }); load() } catch (e: any) { toast(errText(t, e.detail)) }
   }
-  const leaveBtn = (c: any) => c.leaving
+  // only groups can be left; a person's private chat is only deactivated (Unregister)
+  const leaveBtn = (c: any) => !String(c.chat_id).endsWith('@g.us') ? null : c.leaving
     ? <span className="small muted icon-text"><Loader2 size={14} className="spin" /> {t('leaving')}</span>
     : <button className="link danger" onClick={() => leave(c)}>{t('leave_chat')}</button>
   const statusColor: Record<string, string> = { connected: 'high', qr: 'medium', offline: 'low', disconnected: 'low', logged_out: 'low' }
@@ -118,6 +119,7 @@ function Connectors() {
                     <span className="small muted">{t('registration_code_help')}</span>
                   </div>
                 )}
+                {c.platform === 'whatsapp' && <PrivateCode platform={c.platform} value={c.private_code || ''} onSaved={load} />}
 
                 <h4>{t('registered_chats')}</h4>
                 {reg.length === 0 ? <div className="small muted">{t('conn_no_chats')}</div> : (
@@ -163,6 +165,32 @@ function Connectors() {
         )
       })}
       {editing && <ChatEditor chat={editing} onClose={() => { setEditing(null); load() }} />}
+    </div>
+  )
+}
+
+/** The secret word a person sends to the bot to activate their private chat. Empty: private chats stay ignored. */
+function PrivateCode({ platform, value, onSaved }: { platform: string; value: string; onSaved: () => void }) {
+  const { t } = useT()
+  const { toast } = useStore()
+  const [v, setV] = useState(value)
+  const [show, setShow] = useState(false)
+  useEffect(() => setV(value), [value])
+  const dirty = v.trim() !== value
+  const save = async () => {
+    try { await api(`/api/admin/connectors/${platform}/private-code`, { method: 'PUT', body: { code: v } }); toast(t('saved')); onSaved() }
+    catch (e: any) { toast(errText(t, e.detail)) }
+  }
+  return (
+    <div className="col" style={{ gap: 4 }}>
+      <h4 style={{ margin: 0 }}>{t('private_code')}</h4>
+      <div className="row">
+        <input type={show ? 'text' : 'password'} value={v} autoComplete="off" placeholder={t('private_code_none')} maxLength={100}
+          onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && dirty) save() }} style={{ width: 240 }} />
+        <button className="icon" title={show ? t('hide') : t('show')} onClick={() => setShow(!show)}>{show ? <EyeOff size={15} /> : <Eye size={15} />}</button>
+        <button className="primary" disabled={!dirty} onClick={save}>{t('save')}</button>
+      </div>
+      <span className="small muted">{value ? t('private_code_help') : t('private_code_off')}</span>
     </div>
   )
 }

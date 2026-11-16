@@ -86,7 +86,8 @@ def _resolve_destination(db: DB, meta: IngestMeta) -> tuple[int | None, list[int
     folder_id, tag_ids = meta.folder_id, list(meta.tag_ids)
     if meta.platform in BOT_PLATFORMS:
         reg = db.query(m.RegisteredChat).filter_by(platform=meta.platform, chat_id=meta.chat_id, active=True).first()
-        if reg is None and meta.force_reason != "private_forward":
+        # private chats too: a person's chat with the bot counts only once activated with the secret word
+        if reg is None:
             raise IngestRejected("chat_not_registered")
         if reg is not None:
             if reg.mode == "override" and not meta.forced:
