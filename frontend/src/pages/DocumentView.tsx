@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useT } from '../i18n'
@@ -252,14 +252,114 @@ function Marked({ text, q, scroll, at }: { text: string; q: string; scroll?: boo
   })}</span>
 }
 
+/** The OCR words laid invisibly over the page image at their places, so the text can be selected by dragging over
+ *  the image and copied (or dragged out). Each word is stretched to the width of its box; copying rebuilds the lines
+ *  and paragraphs from the OCR, not from where the browser thinks the absolutely placed words break. */
+function TextLayer({ structure }: { structure: { width: number; height: number; words: any[] } }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const W = structure.width, H = structure.height
+  const words = useMemo(() => structure.words.filter((w: any) => w.text && w.box?.[2] > 0 && w.box?.[3] > 0), [structure])
+  // fit every word to its box width: font metrics differ from the scanned type
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const fit = () => {
+      const sx = el.getBoundingClientRect().width / W
+      const spans = Array.from(el.querySelectorAll<HTMLElement>('span'))
+      // all writes, then all reads, then all writes: one layout pass instead of one per word
+      spans.forEach((s) => { s.style.transform = '' })
+      const natural = spans.map((s) => s.getBoundingClientRect().width)
+      spans.forEach((s, i) => { if (natural[i]) s.style.transform = `scaleX(${(Number(s.dataset.w) * sx) / natural[i]})` })
+    }
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [words, W])
+  const spansOf = () => Array.from(ref.current?.querySelectorAll<HTMLElement>('span') || [])
+  // words, in page order, joined as the OCR laid them out: spaces in a line, line breaks, blank lines between paragraphs
+  const join = (parts: { s: HTMLElement; txt: string }[]) => {
+    let out = '', last: string[] | null = null
+    for (const { s, txt } of parts) {
+      const key = [s.dataset.b!, s.dataset.p!, s.dataset.l!]
+      if (last) out += key[0] !== last[0] || key[1] !== last[1] ? '\n\n' : key[2] !== last[2] ? '\n' : ' '
+      out += txt
+      last = key
+    }
+    return out
+  }
+  // the words the drag selection touches (the first and last may be selected only in part)
+  const selectedParts = () => {
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount || sel.isCollapsed) return []
+    const r = sel.getRangeAt(0)
+    return spansOf().filter((s) => sel.containsNode(s, true)).map((s) => {
+      let txt = s.textContent || ''
+      if (s.contains(r.endContainer)) txt = txt.slice(0, r.endOffset)
+      if (s.contains(r.startContainer)) txt = txt.slice(r.startOffset)
+      return { s, txt }
+    }).filter((p) => p.txt)
+  }
+
+  // Ctrl/Cmd+click picks words one by one (the browser keeps only one selection range, so these are kept here)
+  const [picked, setPicked] = useState<Set<number>>(new Set())
+  useEffect(() => setPicked(new Set()), [words])
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (!(e.ctrlKey || e.metaKey) || e.button !== 0) { if (e.button === 0 && picked.size) setPicked(new Set()); return }
+    const span = (e.target as HTMLElement).closest<HTMLElement>('.text-layer span')
+    if (!span) return
+    e.preventDefault() // no new drag selection; the click only adds / removes the word
+    const all = spansOf()
+    const next = new Set(picked)
+    // what was drag-selected so far joins the picked words
+    selectedParts().forEach((p) => next.add(all.indexOf(p.s)))
+    window.getSelection()?.removeAllRanges()
+    const i = all.indexOf(span)
+    next.has(i) ? next.delete(i) : next.add(i)
+    setPicked(next)
+  }
+  // copying picked words: there is no browser selection then, so the copy event comes to the document, not here
+  useEffect(() => {
+    if (!picked.size) return
+    const all = spansOf()
+    const onCopy = (e: ClipboardEvent) => {
+      if (!window.getSelection()?.isCollapsed) return // something else is selected (here or anywhere): that is copied
+      e.clipboardData?.setData('text/plain', join([...picked].sort((a, b) => a - b).map((i) => ({ s: all[i], txt: all[i].textContent || '' }))))
+      e.preventDefault()
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPicked(new Set()) }
+    // a press anywhere else on the screen drops the picked words, like it drops a selection
+    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setPicked(new Set()) }
+    document.addEventListener('copy', onCopy)
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => { document.removeEventListener('copy', onCopy); document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown) }
+  }, [picked])
+  const onCopy = (e: React.ClipboardEvent) => {
+    const parts = selectedParts()
+    if (!parts.length) return
+    e.clipboardData.setData('text/plain', join(parts))
+    e.preventDefault()
+  }
+  return (
+    <div ref={ref} className="text-layer" onCopy={onCopy} onMouseDown={onMouseDown}>
+      {words.map((w: any, i: number) => (
+        <span key={i} className={picked.has(i) ? 'picked' : undefined} data-w={w.box[2]} data-b={w.block} data-p={w.par} data-l={w.line}
+          style={{ left: `${(w.box[0] / W) * 100}%`, top: `${(w.box[1] / H) * 100}%`, fontSize: `${(w.box[3] / H) * 100}cqh` }}>{w.text}</span>
+      ))}
+    </div>
+  )
+}
+
 function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any; q: string; mode: string; preview: any; edit: (stage: string, v: any, reset?: boolean) => void; onCancelEdit: () => void }) {
   const { t } = useT()
   const [structure, setStructure] = useState<any>(null)
   const [comparing, setComparing] = useState(false)
   useEffect(() => {
     setStructure(null)
-    if (q && page.status === 'ready') api(`/api/pages/${page.id}/structure`).then(setStructure).catch(() => {})
-  }, [page.id, page.updated_at, q])
+    // the OCR words: for the selectable text layer, and with a search for marking the matches
+    if (page.status === 'ready') api(`/api/pages/${page.id}/structure`).then(setStructure).catch(() => {})
+  }, [page.id, page.updated_at])
   const hits = useMemo(() => {
     if (!structure || !q) return []
     const stems = stemsOf(q)
@@ -286,6 +386,7 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
           {hits.map((w: any, i: number) => <rect key={i} className="hl" x={w.box[0] - 2} y={w.box[1] - 2} width={w.box[2] + 4} height={w.box[3] + 4} rx={3} />)}
         </svg>
       )}
+      {!comparing && structure?.words?.length > 0 && structure.width > 0 && <TextLayer structure={structure} />}
       {['queued', 'processing'].includes(page.status) && <div className="canvas-busy"><Loader2 size={14} className="spin" /> {t(page.status)}</div>}
       {['stopped', 'excluded'].includes(page.status) && <div className="canvas-busy">{t(page.status)}</div>}
     </div>
