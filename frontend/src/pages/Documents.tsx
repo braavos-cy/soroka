@@ -104,9 +104,18 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     return p.toString()
   }, [params, view, limit, user.include_subfolders])
 
+  const shown = useRef('')
+  const loadSeq = useRef(0)// search-as-you-type: an answer to an older query must not replace a newer one
   const load = useCallback(() => {
+    const seq = ++loadSeq.current
     setLoading(true)
-    api(`/api/documents?${query()}`).then((r) => { setItems(r.items); setTotal(r.total) }).catch((e) => toast(e.detail)).finally(() => setLoading(false))
+    api(`/api/documents?${query()}`).then((r) => { if (seq !== loadSeq.current) return
+      // same answer as what is on screen (next letter of the same word, background refresh): leave the list alone
+      const sig = JSON.stringify(r.items)
+      if (sig !== shown.current) { shown.current = sig; setItems(r.items) }
+      setTotal(r.total)
+    })
+      .catch((e) => { if (seq === loadSeq.current) toast(e.detail) }).finally(() => { if (seq === loadSeq.current) setLoading(false) })
   }, [query])
   useEffect(() => { load() }, [load])
   // arriving from a document ("Show in folders"): scroll to it and flash it once; load further pages until it is found
@@ -231,6 +240,38 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const folderId = params.get('folder') ? Number(params.get('folder')) : null
   const heading = view === 'trash' ? t('trash') : view === 'rejected' ? t('rejected') : folderId ? folderPath(folders, folderId) : t('all_documents')
 
+  const searchMode = !!params.get('q')
+  // an occurrence opens the place it is in: page text -> that page with the Text tab, context -> the Info tab with
+  // the field / message marked, title or file name -> just the document
+  const openHit = (d: DocSummary, h: NonNullable<DocSummary['hits']>[number]) => {
+    const p = new URLSearchParams({ q: params.get('q') || '' })
+    if (h.where === 'text') {
+      p.set('tab', 'text')
+      if (h.page != null) p.set('page', String(h.page + 1))
+      // which occurrence on that page: its text without the hit marks, and where the first matched word starts
+      p.set('at', h.text.replace(/[\x01\x02]/g, ''))
+      p.set('ao', String(Math.max(0, h.text.indexOf('\x01'))))
+    }
+    else if (h.where === 'context') { p.set('tab', 'info'); if (h.field) p.set('focus', h.field) }
+    else return nav(`/doc/${d.id}`)
+    nav(`/doc/${d.id}?${p}`)
+  }
+  const card = (d: DocSummary) => (
+    <div key={d.id} data-doc-id={d.id} className={'doc-card' + (sel.has(d.id) ? ' sel' : '')} onClick={() => (selecting ? toggle(d.id) : open(d))} draggable onDragStart={(e) => dragStart(e, d)}>
+      <input type="checkbox" className="chk" checked={sel.has(d.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(d.id)} />
+      <span className="tierdot"><TierBadge tier={d.needs_review ? 'low' : d.tier} status={d.status} /></span>
+      <div className="thumb"><PageThumb pageId={d.first_page_id} v={d.thumb_v} status={d.status} /></div>
+      <div className="body">
+        <div className="card-title">
+          <FileName name={d.title} className="t" />
+          {d.page_count > 0 && <span className="pages-count" title={plural(t, lang, d.page_count, 'pl_pages')}><Files size={13} />{d.page_count}</span>}
+        </div>
+        {view === 'rejected' && <button onClick={(e) => { e.stopPropagation(); rescue(d.id) }}>{t('rescue')}</button>}
+        {view === 'trash' && <button onClick={(e) => { e.stopPropagation(); api('/api/documents/bulk', { body: { ids: [d.id], action: 'restore' } }).then(() => { setSel((o) => { const n = new Set(o); n.delete(d.id); return n }); load(); reload() }).catch((err) => toast(err.detail)) }}>{t('restore')}</button>}
+        {d.tags.length > 0 && <div className="card-tags"><TagChips ids={d.tags} singleLine /></div>}
+      </div>
+    </div>
+  )
   return (
     <div className={sel.size + upSel.size > 0 ? 'has-selection' : undefined}>
       {/* while documents are selected the selection actions replace the regular toolbar (same place, same height) */}
@@ -269,7 +310,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
         {total > 0 && <Select value={params.get('sort') || ''} onChange={(v) => setParam('sort', v)} icon={<ArrowDownUp size={15} />} title={t('sort')} className="sort-btn"
           options={[{ value: '', label: t('sort_received_desc') }, { value: 'received_asc', label: t('sort_received_asc') },
             { value: 'date_desc', label: t('sort_date_desc') }, { value: 'title', label: t('sort_title') }]} />}
-        <div className="seg"><button className={layout === 'grid' ? 'active' : ''} onClick={() => setLayoutP('grid')} title={t('layout_grid')}><LayoutGrid size={15} /></button><button className={layout === 'list' ? 'active' : ''} onClick={() => setLayoutP('list')} title={t('layout_list')}><List size={15} /></button></div>
+        {!searchMode && <div className="seg"><button className={layout === 'grid' ? 'active' : ''} onClick={() => setLayoutP('grid')} title={t('layout_grid')}><LayoutGrid size={15} /></button><button className={layout === 'list' ? 'active' : ''} onClick={() => setLayoutP('list')} title={t('layout_list')}><List size={15} /></button></div>}
         {view === 'active' && <button className="primary upload-btn" onClick={() => setUpload(true)} title={t('upload')}><UploadIcon size={16} /> <span>{t('upload')}</span></button>}
         {view === 'trash' && user.role === 'admin' && total > 0 && <button className="danger" onClick={emptyTrash} title={t('empty_trash')}><Trash2 size={15} /> <span className="lbl-phone-hide">{t('empty_trash')}</span></button>}
         </>}
@@ -305,25 +346,23 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
       {band && <div className="band" style={{ left: band.x, top: band.y, width: band.w, height: band.h }} />}
       {upFilter && <div className="filters small">{t('up_filter_on')} <button className="link" onClick={() => setParam('upload', '')}><X size={13} /> {t('clear_selection')}</button></div>}
       {!loading && docsShown.length === 0 && upVisible.length === 0 && <div className="page-pad muted">{t('nothing_found')}</div>}
-      {layout === 'grid' ? (
-        <div className="grid">
-          {upVisible.map((u) => <UploadCard key={u.id} {...upProps(u)} />)}
+      {searchMode ? (
+        /* search: one row per document — its card on the left, every place the words occur on the right */
+        <div className="hit-rows">
           {docsShown.map((d) => (
-            <div key={d.id} data-doc-id={d.id} className={'doc-card' + (sel.has(d.id) ? ' sel' : '')} onClick={() => (selecting ? toggle(d.id) : open(d))} draggable onDragStart={(e) => dragStart(e, d)}>
-              <input type="checkbox" className="chk" checked={sel.has(d.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(d.id)} />
-              <span className="tierdot"><TierBadge tier={d.needs_review ? 'low' : d.tier} status={d.status} /></span>
-              <div className="thumb"><PageThumb pageId={d.first_page_id} v={d.thumb_v} status={d.status} /></div>
-              <div className="body">
-                <div className="card-title">
-                  <FileName name={d.title} className="t" />
-                  {d.page_count > 0 && <span className="pages-count" title={plural(t, lang, d.page_count, 'pl_pages')}><Files size={13} />{d.page_count}</span>}
-                </div>
-                {view === 'rejected' && <button onClick={(e) => { e.stopPropagation(); rescue(d.id) }}>{t('rescue')}</button>}
-                {view === 'trash' && <button onClick={(e) => { e.stopPropagation(); api('/api/documents/bulk', { body: { ids: [d.id], action: 'restore' } }).then(() => { setSel((o) => { const n = new Set(o); n.delete(d.id); return n }); load(); reload() }).catch((err) => toast(err.detail)) }}>{t('restore')}</button>}
-                {d.tags.length > 0 && <div className="card-tags"><TagChips ids={d.tags} singleLine /></div>}
-              </div>
+            <div key={d.id} className="hit-row">
+              {card(d)}
+              <div className="hits"><div className="hits-in">
+                {(d.hits || []).map((h, i) => <div key={i} className="hit-line" role="link" tabIndex={0} onClick={() => (selecting ? toggle(d.id) : openHit(d, h))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') openHit(d, h) }}><span className={'hit-where ' + h.where}>{t('hit_' + h.where)}</span><Snippet text={h.text} /></div>)}
+              </div></div>
             </div>
           ))}
+        </div>
+      ) : layout === 'grid' ? (
+        <div className="grid">
+          {upVisible.map((u) => <UploadCard key={u.id} {...upProps(u)} />)}
+          {docsShown.map(card)}
         </div>
       ) : (
         <table className="list docs-list">

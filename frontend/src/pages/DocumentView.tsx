@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useT } from '../i18n'
@@ -6,7 +6,7 @@ import { folderPath, useStore } from '../store'
 import { fmtBytes, fmtDate, PageThumb, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Menu, Select, useDialog } from '../components/ui'
 import { CropEditor, MeshEditor } from '../components/PageEditors'
-import { ArchiveRestore, ArrowLeft, Check, CheckCheck, Crop, Download, FolderSearch, Grid3x3, History, Layers2, Loader2, MoreHorizontal, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
+import { ArchiveRestore, ArrowDown, ArrowLeft, ArrowUp, Check, CheckCheck, Crop, Download, FolderSearch, Grid3x3, History, Layers2, Loader2, MoreHorizontal, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
 
 const STAGES = ['quality', 'acceptance', 'crop', 'dewarp', 'orientation', 'deskew', 'cleanup', 'ocr', 'layout', 'consistency', 'outputs']
 type Pt = [number, number]
@@ -32,9 +32,14 @@ export default function DocumentView() {
   const [params] = useSearchParams()
   const q = params.get('q') || ''
   const [doc, setDoc] = useState<any>(null)
-  const [pageIdx, setPageIdx] = useState(0)
+  // opened from a search occurrence: ?page= (1-based), ?tab=, ?focus= (info field or context message)
+  const [pageIdx, setPageIdx] = useState(() => Math.max(0, Number(params.get('page') || 1) - 1))
   const [page, setPage] = useState<any>(null)
-  const [tab, setTab] = useState<'pipeline' | 'info' | 'text'>('pipeline')
+  const [tab, setTab] = useState<'pipeline' | 'info' | 'text'>(() => (['info', 'text'].includes(params.get('tab') || '') ? params.get('tab') as 'info' | 'text' : 'pipeline'))
+  const focus = params.get('focus') || ''
+  // the occurrence pressed in the search results: its text and where in it the matched word starts
+  const atText = params.get('at') || '', atOff = Number(params.get('ao') || 0)
+  const at = useMemo(() => (atText ? { text: atText, off: atOff } : undefined), [atText, atOff])
   const [mode, setMode] = useState<'result' | 'crop'>('result')
   const [preview, setPreview] = useState<{ rotate?: number; deskew?: number } | null>(null)
   const [thFilter, setThFilter] = useState<string | null>(null)
@@ -49,6 +54,8 @@ export default function DocumentView() {
 
   const loadDoc = useCallback(() => api(`/api/documents/${id}`).then(setDoc).catch((e) => toast(e.detail)), [id])
   useEffect(() => { loadDoc() }, [loadDoc])
+  // a page number from the address that the document does not have (pages removed since): the last page
+  useEffect(() => { if (doc?.pages?.length && pageIdx >= doc.pages.length) setPageIdx(doc.pages.length - 1) }, [doc?.pages?.length, pageIdx])
   const pageSummary = doc?.pages?.[pageIdx]
   const loadPage = useCallback(() => { if (pageSummary) api(`/api/pages/${pageSummary.id}`).then(setPage) }, [pageSummary?.id])
   useEffect(() => { setPage(null); setMode('result'); setPreview(null); loadPage() }, [pageSummary?.id])
@@ -169,8 +176,8 @@ export default function DocumentView() {
             {(['pipeline', 'info', 'text'] as const).map((k) => <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{t(k)}</button>)}
           </div>
           {tab === 'pipeline' && page && <PipelinePanel page={page} edit={edit} post={post} setMode={setMode} mode={mode} setPreview={setPreview} />}
-          {tab === 'info' && <InfoPanel doc={doc} />}
-          {tab === 'text' && page && <div className="page-pad"><div className="pre">{page.text || t('no_text')}</div></div>}
+          {tab === 'info' && <InfoPanel doc={doc} q={q} focus={focus} />}
+          {tab === 'text' && page && <div className="page-pad"><div className="pre">{page.text ? <Marked text={page.text} q={q} scroll at={at} /> : t('no_text')}</div></div>}
         </div>
       </div>
     </div>
@@ -179,6 +186,52 @@ export default function DocumentView() {
 
 // ---------------------------------------------------------------- canvas: result with search hits / crop editor
 function norm(s: string) { return s.toLowerCase().replace(/ё/g, 'е') }
+
+// search words as prefixes, a little shortened so that Russian endings match (договор / договора / договору)
+function stemsOf(q: string): string[] {
+  const terms = q.split(/\s+/).filter((w) => !w.startsWith('-')).flatMap((w) => w.split(/[^\p{L}\p{N}]+/u)).map(norm).filter((w) => w.length >= 2)
+  return terms.map((w) => (w.length > 5 ? w.slice(0, w.length - 2) : w))
+}
+
+/** Where in `text` the search occurrence `at` is (offset of its matched word), or -1. The occurrence comes from the
+ *  server with ё -> е and every run of whitespace as one space, so the text is compared in that form. */
+function findOccurrence(text: string, at?: { text: string; off: number }): number {
+  if (!at?.text) return -1
+  let flat = ''
+  const raw: number[] = [] // position in `flat` -> position in `text`
+  let space = true // also drops leading whitespace
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (/\s/.test(ch)) { if (!space) { flat += ' '; raw.push(i); space = true } continue }
+    flat += ch === 'ё' ? 'е' : ch === 'Ё' ? 'Е' : ch
+    raw.push(i)
+    space = false
+  }
+  const pos = flat.indexOf(at.text)
+  return pos < 0 ? -1 : raw[pos + at.off] ?? -1
+}
+
+/** Text with the search words marked. `scroll` brings one into view: the occurrence `at` (the line pressed in the
+ *  search results) when it is in this text, otherwise the first match. */
+function Marked({ text, q, scroll, at }: { text: string; q: string; scroll?: boolean; at?: { text: string; off: number } }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const stems = useMemo(() => stemsOf(q), [q])
+  const target = useMemo(() => findOccurrence(text, at), [text, at?.text, at?.off])
+  useEffect(() => {
+    if (scroll) (ref.current?.querySelector('mark.cur') || ref.current?.querySelector('mark'))?.scrollIntoView({ block: 'center' })
+  }, [text, q, scroll, target])
+  if (!stems.length && target < 0) return <>{text}</>
+  // split keeps the words (odd indexes) and what is between them
+  const parts = text.split(/([\p{L}\p{N}]+)/u)
+  let pos = 0
+  return <span ref={ref}>{parts.map((p, i) => {
+    const start = pos
+    pos += p.length
+    if (!(i % 2)) return p
+    const cur = target >= start && target < pos
+    return cur || stems.some((s) => norm(p).startsWith(s)) ? <mark key={i} className={cur ? 'cur' : undefined}>{p}</mark> : p
+  })}</span>
+}
 
 function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any; q: string; mode: string; preview: any; edit: (stage: string, v: any, reset?: boolean) => void; onCancelEdit: () => void }) {
   const { t } = useT()
@@ -190,10 +243,9 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
   }, [page.id, page.updated_at, q])
   const hits = useMemo(() => {
     if (!structure || !q) return []
-    const terms = q.split(/\s+/).map((w) => norm(w.replace(/[^\p{L}\p{N}]/gu, ''))).filter((w) => w.length >= 2 && !w.startsWith('-'))
-    // prefix match on a stem-ish prefix: handles Russian endings (договор / договора / договору)
-    const stems = terms.map((w) => (w.length > 5 ? w.slice(0, w.length - 2) : w))
-    return structure.words.filter((w: any) => { const x = norm(w.text.replace(/[^\p{L}\p{N}]/gu, '')); return stems.some((s) => x.startsWith(s)) })
+    const stems = stemsOf(q)
+    // an OCR word may carry punctuation or be several search words in one ("IMG_1234.jpg"): try every piece of it
+    return structure.words.filter((w: any) => norm(w.text).split(/[^\p{L}\p{N}]+/u).some((x) => x && stems.some((s) => x.startsWith(s))))
   }, [structure, q])
 
   if (page.status === 'error') return <div className="card err" style={{ maxWidth: 600 }}><b>{t('page_error')}</b><pre className="small" style={{ whiteSpace: 'pre-wrap' }}>{page.error}</pre></div>
@@ -394,11 +446,21 @@ function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: a
 }
 
 // ---------------------------------------------------------------- info panel: source metadata & context
-function InfoPanel({ doc }: { doc: any }) {
+// where the document itself sits among its context messages: earlier ones above, later ones below
+function CtxHere() {
+  const { t } = useT()
+  return <div className="ctx-here"><span className="icon-text"><ArrowUp size={11} />{t('ctx_before')}</span><span>{t('ctx_this_doc')}</span><span className="icon-text">{t('ctx_after')}<ArrowDown size={11} /></span></div>
+}
+
+function InfoPanel({ doc, q = '', focus = '' }: { doc: any; q?: string; focus?: string }) {
   const { t } = useT()
   const ev = doc.event
+  // the field or message a search occurrence pointed to: marked and scrolled into view
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => { box.current?.querySelector('.focus')?.scrollIntoView({ block: 'center' }) }, [focus, doc.id])
+  const fc = (k: string) => (focus === k ? ' focus' : '')
   return (
-    <div className="page-pad col">
+    <div className="page-pad col" ref={box}>
       <div className="kv">
         <span>{t('source')}</span><span>{t('source_' + doc.source)}</span>
         <span>{t('uploaded')}</span><span>{fmtDate(doc.received_at, true)}</span>
@@ -406,8 +468,8 @@ function InfoPanel({ doc }: { doc: any }) {
         <span>{t('status')}</span><span>{doc.status} {doc.status_detail}</span>
         {doc.language && <><span>{t('languages')}</span><span>{doc.language}</span></>}
         {doc.rejected && <><span>{t('expires')}</span><span>{fmtDate(doc.rejected.expires_at, true)} ({doc.rejected.reason})</span></>}
-        {ev?.chat_name && <><span>{t('chat')}</span><span>{ev.chat_name}</span></>}
-        {(ev?.sender_name || ev?.sender_phone || ev?.sender_email) && <><span>{t('sender')}</span><span>{[ev.sender_name, ev.sender_phone, ev.sender_username, ev.sender_email].filter(Boolean).join(' · ')}</span></>}
+        {ev?.chat_name && <><span>{t('chat')}</span><span className={fc('chat')}><Marked text={ev.chat_name} q={q} /></span></>}
+        {(ev?.sender_name || ev?.sender_phone || ev?.sender_email) && <><span>{t('sender')}</span><span className={fc('sender')}><Marked text={[ev.sender_name, ev.sender_phone, ev.sender_username, ev.sender_email].filter(Boolean).join(' · ')} q={q} /></span></>}
         {ev?.sent_at && <><span>{t('sent_at')}</span><span>{fmtDate(ev.sent_at, true)}</span></>}
         {ev?.forwarded && <><span>{t('forwarded')}</span><span><Check size={13} /></span></>}
         {ev?.forced && <><span>{t('forced')}</span><span>{ev.force_reason}</span></>}
@@ -415,16 +477,22 @@ function InfoPanel({ doc }: { doc: any }) {
         {ev?.extra?.from && <><span>From</span><span>{ev.extra.from}</span></>}
         {ev?.extra?.import_path && <><span>Path</span><span>{ev.extra.import_path}</span></>}
       </div>
-      {ev?.caption && <div><label>{t('caption')}</label><div className="ctx-msg">{ev.caption}</div></div>}
-      {ev?.reply_to?.text && <div><label>{t('reply_to')}</label><div className="ctx-msg">{ev.reply_to.text}</div></div>}
+      {ev?.caption && <div><label>{t('caption')}</label><div className={'ctx-msg' + fc('caption')}><Marked text={ev.caption} q={q} /></div></div>}
+      {ev?.reply_to?.text && <div><label>{t('reply_to')}</label><div className={'ctx-msg' + fc('reply')}><Marked text={ev.reply_to.text} q={q} /></div></div>}
       {ev?.context?.length > 0 && (
         <div className="col" style={{ gap: 4 }}>
           <label>{t('context')}</label>
-          {[...ev.context].sort((a: any, b: any) => (a.time || '').localeCompare(b.time || '')).map((c: any, i: number) => (
-            <div key={i} className="ctx-msg" style={c.position === 'after' ? { borderLeft: '3px solid var(--accent)' } : undefined}>
-              <div className="who">{c.sender_name || c.sender} · {fmtDate(c.time, true)}</div>{c.text}
-            </div>
+          {/* focus refers to the message's place in the stored list, so keep it through the sort by time */}
+          {/* a quiet divider shows where the document itself was sent: messages before it above, after it below */}
+          {ev.context.map((c: any, i: number) => ({ c, i })).sort((a: any, b: any) => (a.c.time || '').localeCompare(b.c.time || '')).map(({ c, i }: any, n: number, all: any[]) => (
+            <Fragment key={i}>
+              {c.position === 'after' && all[n - 1]?.c.position !== 'after' && <CtxHere />}
+              <div className={'ctx-msg' + fc('context:' + i)}>
+                <div className="who"><Marked text={String(c.sender_name || c.sender || '')} q={q} /> · {fmtDate(c.time, true)}</div><Marked text={String(c.text || '')} q={q} />
+              </div>
+            </Fragment>
           ))}
+          {ev.context.every((c: any) => c.position !== 'after') && <CtxHere />}
         </div>
       )}
       {ev?.extra?.body && <div><label>Email</label><div className="pre">{ev.extra.body}</div></div>}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, setUnauthHandler, User } from './api'
 import { Lang, LangCtx, makeT, useT } from './i18n'
@@ -13,7 +13,7 @@ import AccountPage from './pages/Account'
 import { ReauthModal } from './components/Reauth'
 import { DialogProvider } from './components/ui'
 import { UploadsProvider } from './components/uploads'
-import { PanelLeftClose, PanelLeftOpen, Bird, CircleUser, Files, ListChecks, LogOut, Menu, Search, Settings, ShieldX, Trash2 } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Bird, CircleUser, Files, ListChecks, LogOut, Menu, Search, Settings, ShieldX, Trash2, X } from 'lucide-react'
 
 export default function App() {
   const [lang, setLangState] = useState<Lang>(() => {
@@ -47,12 +47,68 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   const nav = useNavigate()
   const [params] = useSearchParams()
   const [q, setQ] = useState(params.get('q') || '')
-  useEffect(() => { setQ(params.get('q') || '') }, [params.get('q')])
+  const searchInput = useRef<HTMLInputElement>(null)
+  // follow the URL (back/forward, links), but never overwrite what is being typed: the URL lags behind the keys
+  useEffect(() => { if (document.activeElement !== searchInput.current) setQ(params.get('q') || '') }, [params.get('q')])
+  const searching = location.pathname === '/' && !!params.get('q')
+  const beforeSearch = useRef<string | null>(null) // where the user was when the search started
+  // emptying the box ends the search: back to the page it was started from
+  const leaveSearch = () => {
+    // inside a document opened from a search: stay there, only drop the search and with it the highlights
+    if (location.pathname.startsWith('/doc/') && params.get('q')) {
+      const p = new URLSearchParams(params)
+      for (const k of ['q', 'focus', 'at', 'ao']) p.delete(k)
+      return nav(location.pathname + (p.toString() ? '?' + p : ''), { replace: true })
+    }
+    if (!searching) return
+    const back = beforeSearch.current
+    beforeSearch.current = null
+    if (back) return nav(back)
+    const p = new URLSearchParams(params)
+    p.delete('q')
+    nav('/?' + p.toString())
+  }
+  // a press anywhere outside the box takes the cursor out of it. The browser does not always do this by itself:
+  // the document list cancels the default mouse-down (drag selection), and that also cancels the blur.
+  useEffect(() => {
+    const h = (e: PointerEvent) => {
+      const el = searchInput.current
+      if (el && document.activeElement === el && !el.closest('form')?.contains(e.target as Node)) el.blur()
+    }
+    document.addEventListener('pointerdown', h, true)
+    return () => document.removeEventListener('pointerdown', h, true)
+  }, [])
+  // reads the address bar, not React state: it also runs from the typing timer, after several renders
+  const runSearch = (text: string) => {
+    const onList = location.pathname === '/'
+    const cur = new URLSearchParams(onList ? location.search : '')
+    if (cur.get('q') === text) return
+    const already = onList && !!cur.get('q')
+    if (!already) beforeSearch.current = location.pathname + location.search
+    cur.set('q', text)
+    nav('/?' + cur.toString(), { replace: already }) // one history entry per search, not one per key
+  }
+  // search as you type, a moment after the last key
+  const typing = useRef<number>()
+  const onSearchChange = (v: string) => {
+    setQ(v)
+    window.clearTimeout(typing.current)
+    if (!v.trim()) return leaveSearch()
+    if (v.trim().length < 2) return // one character matches almost everything: wait for the second (Enter still searches)
+    typing.current = window.setTimeout(() => runSearch(v.trim()), 250)
+  }
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    const p = new URLSearchParams(location.pathname === '/' ? params : undefined)
-    if (q.trim()) p.set('q', q.trim()); else p.delete('q')
-    nav('/?' + p.toString())
+    window.clearTimeout(typing.current)
+    if (!q.trim()) return leaveSearch()
+    runSearch(q.trim())
+  }
+  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Escape') return
+    window.clearTimeout(typing.current)
+    setQ('')
+    leaveSearch()
+    e.currentTarget.blur()
   }
   // narrow screens (phones): the folder / tag pane is a drawer opened from the menu button; closes on navigation
   const [drawer, setDrawer] = useState(false)
@@ -81,7 +137,9 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         <NavLink to="/" className="logo"><Bird size={20} strokeWidth={2.2} /> <span className="logo-txt">{t('app')}</span></NavLink>
         <form className="search" onSubmit={submit}>
           <Search size={15} className="search-icon" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('search')} type="search" />
+          <input ref={searchInput} value={q} onChange={(e) => onSearchChange(e.target.value)} onKeyDown={onSearchKey} placeholder={t('search')} type="search" />
+          {/* own clear button: the browser's one only shows while the box is hovered or focused */}
+          {q && <button type="button" className="icon search-clear" title={t('clear_selection')} onClick={() => { window.clearTimeout(typing.current); setQ(''); leaveSearch() }}><X size={15} /></button>}
         </form>
         {/* desktop: sections in the top bar; phone (< 640px): a bottom tab bar with labels */}
         <nav className="sections">

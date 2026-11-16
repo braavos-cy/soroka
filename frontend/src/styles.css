@@ -43,7 +43,9 @@ h1, h2, h3 { margin: 0 0 12px; } h2 { font-size: 18px; } h3 { font-size: 15px; }
 .topbar nav a.active, .topbar nav a:hover { background: var(--panel2); color: var(--text); }
 .topbar .search { flex: 1; max-width: 560px; position: relative; }
 .topbar .search .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
-.topbar .search input { width: 100%; padding: 7px 12px 7px 32px; border-radius: 5px; }
+.topbar .search input { width: 100%; padding: 7px 32px 7px 32px; border-radius: 5px; }
+.topbar .search input::-webkit-search-cancel-button { display: none; }
+.topbar .search .search-clear { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); }
 .badge { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
 /* nav badges sit on the corner and take no layout space, so tabs never shift */
 .topbar nav a { position: relative; }
@@ -468,6 +470,32 @@ button .count { min-width: 18px; padding: 0 5px; border-radius: 9px; background:
 a.btn-like { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); line-height: 1.25; }
 a.btn-like:hover { border-color: var(--accent); }
 @media (min-width: 641px) { .acc-admin { display: none; } }
+/* "Documents" is a tab of the phone's bottom bar only; on wider screens the logo leads to the list */
+@media (min-width: 641px) { .topbar nav .nav-docs { display: none; } }
+/* search results: one row per document — card on the left, one line per occurrence on the right */
+.hit-rows { display: flex; flex-direction: column; gap: 14px; padding: 16px 20px; }
+.hit-row { display: flex; gap: 16px; align-items: stretch; }
+.hit-row .doc-card { flex: none; width: 200px; }
+.hits { flex: 1; min-width: 0; position: relative; }
+/* out of the flow, so the row is exactly as tall as the card; what does not fit fades out at the bottom */
+.hits-in { position: absolute; inset: 0; overflow: hidden; padding: 2px 6px; }
+.hits::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 48px; pointer-events: none; background: linear-gradient(transparent, var(--bg)); }
+.hits .snippet { max-height: none; font-size: 13px; line-height: 1.75; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hit-line { display: flex; align-items: baseline; gap: 8px; padding: 0 6px; margin: 0 -6px; border-radius: 4px; cursor: pointer; }
+.hit-line:hover, .hit-line:focus-visible { background: var(--accent-weak); outline: none; }
+.ctx-here { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; margin: 2px 0; }
+/* the three labels are one style: same size, weight, colour and line */
+.ctx-here span { display: inline-flex; align-items: center; gap: 3px; font: inherit; font-size: 11px; font-weight: 400; line-height: 1; color: var(--muted); opacity: 1; text-transform: none; letter-spacing: 0; white-space: nowrap; }
+.ctx-here svg { flex: none; }
+.ctx-here::before, .ctx-here::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+/* document view: the place a search occurrence pointed to */
+mark.cur { box-shadow: 0 0 0 2px var(--accent); }
+.ctx-msg.focus, .kv span.focus { background: var(--accent-weak); box-shadow: 0 0 0 2px var(--accent); border-radius: 4px; }
+.hit-line .snippet { flex: 1; min-width: 0; }
+.hit-where { flex: none; width: 74px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) {
+  .hit-rows { padding: 10px; gap: 10px; } .hit-row { gap: 10px; } .hit-row .doc-card { width: 130px; }
+}
 /* admin: connectors as a list of expandable cards */
 .conn-list { display: flex; flex-direction: column; gap: 10px; }
 .card.conn { padding: 0; }
