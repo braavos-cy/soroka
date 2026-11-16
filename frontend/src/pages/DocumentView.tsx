@@ -152,7 +152,8 @@ export default function DocumentView() {
       <div className="doc-head">
         <div className="dh-row">
           <button className="icon" onClick={goBack} title={t('back')}><ArrowLeft size={18} /></button>
-          <input className="title-input" defaultValue={doc.title} key={doc.title} title={doc.title} onBlur={(e) => e.target.value !== doc.title && patch({ title: e.target.value })} />
+          {/* an empty title is not saved: clearing is only to type a new one */}
+          <TitleInput title={doc.title} onSave={(v) => patch({ title: v })} />
         </div>
         <div className="dh-meta">
           <button onClick={() => showPlace()} title={doc.folder_id ? folderPath(folders, doc.folder_id) : t('no_folder')}><FolderSearch size={15} /> <span className="lbl-phone-hide">{t('show_in_folders')}</span></button>
@@ -259,6 +260,24 @@ function Marked({ text, q, scroll, at }: { text: string; q: string; scroll?: boo
     const cur = target >= start && target < pos
     return cur || stems.some((s) => norm(p).startsWith(s)) ? <mark key={i} className={cur ? 'cur' : undefined}>{p}</mark> : p
   })}</span>
+}
+
+/** The document's name, edited in place: as wide as the name (an invisible copy of the text sizes the field; it
+ *  grows and shrinks while typing, up to the width of the header). Saved on blur or Enter, Esc puts the old name
+ *  back; an emptied name is not saved. No clear button here. */
+function TitleInput({ title, onSave }: { title: string; onSave: (v: string) => void }) {
+  const [v, setV] = useState(title)
+  useEffect(() => setV(title), [title])
+  const save = () => { const x = v.trim(); if (!x) setV(title); else if (x !== title) onSave(x) }
+  return (
+    <span className="title-size" data-value={v || ' '}>
+      <input className="title-input" value={v} title={title} size={1} onChange={(e) => setV(e.target.value)} onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') { e.preventDefault(); setV(title); requestAnimationFrame(() => (e.target as HTMLInputElement).blur()) }
+        }} />
+    </span>
+  )
 }
 
 /** The OCR words laid invisibly over the page image at their places, so the text can be selected by dragging over

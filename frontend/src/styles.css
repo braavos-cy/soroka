@@ -162,7 +162,12 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .dh-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dh-meta { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .dh-meta > * { flex: none; } .dh-meta > .chips-line { flex: 1 1 0; width: 0; }
-.doc-head .title-input { font-size: 16px; font-weight: 600; border-color: transparent; background: transparent; min-width: 0; flex: 1; text-overflow: ellipsis; }
+/* the name field is as wide as the name: the field and an invisible copy of its text share one grid cell, the
+   copy sets the width (up to the space in the header, then the name is cut with "…") */
+.doc-head .title-size { display: inline-grid; grid-template-columns: minmax(0, auto); flex: 0 1 auto; min-width: 0; max-width: 100%; font-size: 16px; font-weight: 600; }
+.doc-head .title-size::after { content: attr(data-value); visibility: hidden; white-space: pre; overflow: hidden; padding: 0 9px; min-width: 2ch; }
+.doc-head .title-size::after, .doc-head .title-size > .title-input { grid-area: 1 / 1; }
+.doc-head .title-input { font-size: inherit; font-weight: inherit; border-color: transparent; background: transparent; width: 100%; min-width: 0; text-overflow: ellipsis; }
 .doc-head .title-input:hover { border-color: var(--border); }
 .ctx-msg { padding: 6px 8px; border-radius: 4px; background: var(--panel2); font-size: 13px; }
 .ctx-msg .who { font-size: 11px; color: var(--muted); }
