@@ -105,11 +105,28 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   }
   const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Escape') return
+    e.preventDefault() // handled here: the page-wide Esc below must not end the search a second time
     window.clearTimeout(typing.current)
     setQ('')
     leaveSearch()
     e.currentTarget.blur()
   }
+  // Esc anywhere ends an active search too (in the list or in a document opened from it), unless something nearer
+  // takes it: a dialog, a menu, a field being edited, picked words in the page preview (those mark it handled)
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || !new URLSearchParams(window.location.search).get('q')) return
+      const el = document.activeElement as HTMLElement | null
+      if (el && el !== searchInput.current && el.matches('input, textarea, select, [contenteditable="true"]')) return
+      if (document.querySelector('.modal-bg')) return
+      window.clearTimeout(typing.current)
+      setQ('')
+      leaveSearch()
+      searchInput.current?.blur()
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  })
   // narrow screens (phones): the folder / tag pane is a drawer opened from the menu button; closes on navigation
   const [drawer, setDrawer] = useState(false)
   const loc = useLocation()

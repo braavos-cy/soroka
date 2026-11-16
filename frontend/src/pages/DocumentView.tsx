@@ -327,7 +327,8 @@ function TextLayer({ structure }: { structure: { width: number; height: number; 
       e.clipboardData?.setData('text/plain', join([...picked].sort((a, b) => a - b).map((i) => ({ s: all[i], txt: all[i].textContent || '' }))))
       e.preventDefault()
     }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPicked(new Set()) }
+    // Esc first drops the picked words (marked handled, so the same press does not also end a search)
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); setPicked(new Set()) } }
     // a press anywhere else on the screen drops the picked words, like it drops a selection
     const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setPicked(new Set()) }
     document.addEventListener('copy', onCopy)
