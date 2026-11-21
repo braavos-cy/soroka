@@ -24,8 +24,15 @@ from .organize import subtree_ids
 
 router = APIRouter(prefix="/api", tags=["documents"])
 
-SORTS = {"received_desc": m.Document.received_at.desc(), "received_asc": m.Document.received_at.asc(),
-         "date_desc": m.Document.updated_at.desc(), "title": m.Document.title.asc()}
+# size of a document: its original files as received (source_file_ids is a jsonb array of file_original ids)
+_doc_size = (select(func.coalesce(func.sum(m.FileOriginal.size), 0))
+             .where(m.Document.source_file_ids.op("@>")(func.jsonb_build_array(m.FileOriginal.id)))
+             .correlate(m.Document).scalar_subquery())
+# sort = "<field>_<asc|desc>"
+_SORT_FIELDS = {"received": m.Document.received_at, "date": m.Document.updated_at, "title": m.Document.title,
+                "size": _doc_size, "pages": m.Document.page_count}
+SORTS = {f"{k}_{d}": getattr(col, d)() for k, col in _SORT_FIELDS.items() for d in ("asc", "desc")}
+SORTS["title"] = SORTS["title_asc"]  # older links
 
 
 def _ids(s: str | None) -> list[int]:

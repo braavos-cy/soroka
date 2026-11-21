@@ -9,9 +9,19 @@ import UploadModal, { checkItems, dragVerdict, itemsFromDrop, skippedMessage, to
 import { fmtMB, UpTask, useUploads } from '../components/uploads'
 import { DateRange, FileName, FolderMenu, fmtDate, PageThumb, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Combo, Select, useDialog } from '../components/ui'
-import { ArchiveRestore, ArrowDownUp, Ban, Files, Download, LayoutGrid, List, Pause, Play, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
+import { ArchiveRestore, ArrowDownWideNarrow, ArrowUpNarrowWide, Ban, Files, Download, LayoutGrid, List, Pause, Play, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
 
 const PAGE = 60
+
+// sort: a field from the dropdown plus a direction (the arrow button); choosing a field starts in its natural direction
+const SORT_FIELDS = ['received', 'date', 'title', 'size', 'pages'] as const
+type SortField = typeof SORT_FIELDS[number]
+const SORT_DEFAULT_DIR: Record<SortField, 'asc' | 'desc'> = { received: 'desc', date: 'desc', title: 'asc', size: 'desc', pages: 'desc' }
+function parseSort(s: string | null): [SortField, 'asc' | 'desc'] {
+  if (s === 'title') return ['title', 'asc'] // older links
+  const m = /^(\w+)_(asc|desc)$/.exec(s || '')
+  return m && (SORT_FIELDS as readonly string[]).includes(m[1]) ? [m[1] as SortField, m[2] as 'asc' | 'desc'] : ['received', 'desc']
+}
 
 // filters in the Filters panel; dates count once per range
 const FILTER_GROUPS = [['source'], ['file_type'], ['review'], ['upload'], ['language'], ['received_from', 'received_to'], ['date_from', 'date_to'], ['sender'], ['chat']]
@@ -367,9 +377,17 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
         <span className="spacer" />
         {view === 'active' && <button onClick={() => setShowFilters(!showFilters)} className={showFilters || activeFilters ? 'active' : ''}>
           <SlidersHorizontal size={15} /> {t('filters')}{activeFilters > 0 && <span className="count">{activeFilters}</span>}</button>}
-        {total > 0 && <Select value={params.get('sort') || ''} onChange={(v) => setParam('sort', v)} icon={<ArrowDownUp size={15} />} title={t('sort')} className="sort-btn"
-          options={[{ value: '', label: t('sort_received_desc') }, { value: 'received_asc', label: t('sort_received_asc') },
-            { value: 'date_desc', label: t('sort_date_desc') }, { value: 'title', label: t('sort_title') }]} />}
+        {total > 0 && (() => {
+          // sort = "<field>_<asc|desc>"; none = newest received first
+          const [field, dir] = parseSort(params.get('sort'))
+          const set = (f: SortField, d: 'asc' | 'desc') => setParam('sort', f === 'received' && d === 'desc' ? '' : `${f}_${d}`)
+          return <div className="seg sort-btn">
+            <button onClick={() => set(field, dir === 'asc' ? 'desc' : 'asc')} title={t(dir === 'asc' ? 'sort_asc' : 'sort_desc')}>
+              {dir === 'asc' ? <ArrowUpNarrowWide size={15} /> : <ArrowDownWideNarrow size={15} />}</button>
+            <Select value={field} onChange={(f) => set(f, SORT_DEFAULT_DIR[f])} title={t('sort')}
+              options={SORT_FIELDS.map((f) => ({ value: f, label: t(`sort_${f}`) }))} />
+          </div>
+        })()}
         {!searchMode && <div className="seg"><button className={layout === 'grid' ? 'active' : ''} onClick={() => setLayoutP('grid')} title={t('layout_grid')}><LayoutGrid size={15} /></button><button className={layout === 'list' ? 'active' : ''} onClick={() => setLayoutP('list')} title={t('layout_list')}><List size={15} /></button></div>}
         {view === 'active' && <button className="primary upload-btn" onClick={() => setUpload(true)} title={t('upload')}><UploadIcon size={16} /> <span>{t('upload')}</span></button>}
         {view === 'trash' && user.role === 'admin' && total > 0 && <button className="danger" onClick={emptyTrash} title={t('empty_trash')}><Trash2 size={15} /> <span className="lbl-phone-hide">{t('empty_trash')}</span></button>}
