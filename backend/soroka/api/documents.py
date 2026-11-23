@@ -322,9 +322,9 @@ class BulkIn(BaseModel):
     tag_ids: list[int] = []
 
 
-def stop_processing(db: DB, d: m.Document) -> None:
-    from ..pipeline.runner import stop_processing as _stop  # lazy, like _reject: keeps OpenCV out of API startup
-    _stop(db, d)
+def stop_processing(db: DB, *docs: m.Document) -> None:
+    from ..pipeline.runner import stop_processing_many  # lazy, like _reject: keeps OpenCV out of API startup
+    stop_processing_many(db, list(docs))
 
 
 def stop_page_processing(db: DB, pg: m.Page) -> None:
@@ -358,8 +358,7 @@ def bulk(body: BulkIn, request: Request, p: Principal = Depends(ui_user), db: DB
             if d.trashed_at is None:
                 d.trashed_at, d.trashed_by = now(), p.user_id
         audit(db, p, "documents_trashed", ",".join(str(d.id) for d in docs), client_ip(request))
-        for d in docs:  # processing stops in the trash (resumed on restore)
-            stop_processing(db, d)
+        stop_processing(db, *docs)  # processing stops in the trash (resumed on restore); all in one pass
     elif body.action == "restore":
         for d in docs:
             d.trashed_at = None
@@ -439,15 +438,17 @@ class PurgeIn(BaseModel):
 def purge_documents(body: PurgeIn, request: Request, p: Principal = Depends(admin), db: DB = Depends(get_db)):
     """Permanent deletion of several documents in one request (the selection in Trash / Rejected)."""
     docs = db.query(m.Document).filter(m.Document.id.in_(body.ids or [-1])).all()
+    stop_processing(db, *docs)  # all at once, not per document
     for d in docs:
-        purge(db, d)
+        purge(db, d, stopped=True)
         audit(db, p, "document_purged", d.id, client_ip(request))
     db.commit()
     return {"ok": True, "count": len(docs)}
 
 
-def purge(db: DB, d: m.Document) -> None:
-    stop_processing(db, d)  # no job keeps working on pages that are about to disappear
+def purge(db: DB, d: m.Document, stopped: bool = False) -> None:
+    if not stopped:
+        stop_processing(db, d)  # no job keeps working on pages that are about to disappear
     st = storage()
     page_ids = set()
     for v in db.query(m.DocumentVersion).filter_by(document_id=d.id).all():
@@ -485,8 +486,9 @@ def purge(db: DB, d: m.Document) -> None:
 @router.post("/trash/empty")
 def empty_trash(request: Request, p: Principal = Depends(admin), db: DB = Depends(get_db)):
     docs = db.query(m.Document).filter(m.Document.trashed_at.is_not(None)).all()
+    stop_processing(db, *docs)
     for d in docs:
-        purge(db, d)
+        purge(db, d, stopped=True)
     audit(db, p, "trash_emptied", "", client_ip(request), count=len(docs))
     db.commit()
     return {"purged": len(docs)}

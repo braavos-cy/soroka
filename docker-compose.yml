@@ -39,10 +39,16 @@ services:
   worker:
     <<: *backend
     # priority: live ingest > user edits re-render > bulk backlog
-    command: ["rq", "worker", "--url", "redis://redis:6379/0", "high", "default", "low"]
+    # nice: the workers only get the CPU the api and the database leave free, so the UI (trash, edits, search)
+    # stays quick while hundreds of pages are being processed; idle cores still all go to the workers
+    command: ["nice", "-n", "15", "rq", "worker", "--url", "redis://redis:6379/0", "high", "default", "low"]
     # one worker per CPU core, each page is its own job; Tesseract single-threaded so 4 pages run in parallel
+    # (and so are the math libraries: by default each would start a thread per core in every worker)
     environment:
       TESSERACT_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     deploy:
       replicas: 4
 

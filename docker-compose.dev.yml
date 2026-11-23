@@ -22,7 +22,7 @@ services:
     <<: *backend-dev
     restart: "no"
     deploy: { replicas: 1 }
-    command: ["watchfiles", "--filter", "python", "rq worker --url redis://redis:6379/0 high default low", "soroka"]
+    command: ["watchfiles", "--filter", "python", "nice -n 15 rq worker --url redis://redis:6379/0 high default low", "soroka"]
 
   scheduler:
     <<: *backend-dev

@@ -11,6 +11,7 @@ import secrets
 import socket
 import struct
 import tempfile
+import time
 import traceback
 from datetime import timedelta
 
@@ -653,9 +654,10 @@ def _docs_of_page(db, page_id: int) -> list[m.Document]:
     return [db.get(m.Document, i) for i in ids]
 
 
-def _cancel_jobs(page_ids: set[int], doc_id: int | None = None) -> None:
-    """Remove waiting jobs for these pages (and the document's split job) from the queues and kill running ones.
-    Killing ends the worker's DB transaction, which releases its lock on the page row."""
+def _cancel_jobs(page_ids: set[int], doc_ids: set[int] = frozenset()) -> None:
+    """Remove waiting jobs for these pages (and the documents' split jobs) from the queues and kill running ones.
+    Killing ends the worker's DB transaction, which releases its lock on the page row.
+    Reads every waiting job once: with thousands queued that is the slow part, so stop many documents in one call."""
     from rq.command import send_stop_job_command
     from rq.job import Job
     from rq.registry import StartedJobRegistry
@@ -665,7 +667,7 @@ def _cancel_jobs(page_ids: set[int], doc_id: int | None = None) -> None:
     def ours(job) -> bool:
         fn = job.func_name or ""
         return bool(job.args) and ((fn.endswith("process_page_job") and job.args[0] in page_ids)
-                                   or (doc_id is not None and fn.endswith("process_document") and job.args[0] == doc_id))
+                                   or (fn.endswith("process_document") and job.args[0] in doc_ids))
 
     for name in ("high", "default", "low"):
         # waiting jobs are removed: left in the queue they would run after a restore, ahead of (and twice with)
@@ -687,34 +689,51 @@ def _cancel_jobs(page_ids: set[int], doc_id: int | None = None) -> None:
                 log.warning("could not stop job %s", job_id, exc_info=True)
 
 
-def _pages_in_active_docs(db, exclude_doc: int) -> set[int]:
+def _pages_in_active_docs(db, exclude_docs: list[int]) -> set[int]:
     rows = db.execute(sa_text(
         "SELECT DISTINCT CAST(jsonb_array_elements(v.page_ids) AS int) FROM document d "
         "JOIN document_version v ON v.id = d.current_version_id "
-        "WHERE d.id <> :d AND d.trashed_at IS NULL AND d.status <> 'rejected'"), {"d": exclude_doc}).all()
+        "WHERE d.id <> ALL(:d) AND d.trashed_at IS NULL AND d.status <> 'rejected'"), {"d": exclude_docs}).all()
     return {r[0] for r in rows}
 
 
 def stop_processing(db, doc: m.Document) -> int:
-    """Stop a document's processing: unfinished pages become 'stopped' (no partial result is kept: a page that was
+    return stop_processing_many(db, [doc])
+
+
+def stop_processing_many(db, docs: list[m.Document]) -> int:
+    """Stop documents' processing: unfinished pages become 'stopped' (no partial result is kept: a page that was
     being processed starts from its first stage when the document is resumed), waiting page jobs are removed and
-    running ones killed. Commits."""
+    running ones killed. All documents in one pass (trashing a hundred while hundreds are processing). Commits."""
+    docs = [d for d in docs if d is not None]
+    if not docs:
+        return 0
+    doc_ids = sorted({d.id for d in docs})
+    t0 = time.monotonic()
     page_ids = set()
-    for v in db.query(m.DocumentVersion).filter_by(document_id=doc.id).all():
+    for v in db.query(m.DocumentVersion).filter(m.DocumentVersion.document_id.in_(doc_ids)).all():
         page_ids.update(v.page_ids or [])
-    page_ids -= _pages_in_active_docs(db, doc.id)  # a page shared with a live document keeps going
-    if doc.status in ("queued", "processing"):
-        doc.status = "stopped"
-    db.commit()  # the document is halted from here on: page jobs starting now skip it
+    page_ids -= _pages_in_active_docs(db, doc_ids)  # a page shared with a live document keeps going
+    for d in docs:
+        if d.status in ("queued", "processing"):
+            d.status = "stopped"
+    db.commit()  # the documents are halted from here on: page jobs starting now skip them
     # kill before touching page rows: a running page job holds its page row locked until it finishes (~15 s)
-    _cancel_jobs(page_ids, doc.id)
+    t1 = time.monotonic()
+    _cancel_jobs(page_ids, set(doc_ids))
+    t2 = time.monotonic()
     if not page_ids:
         return 0
-    # serializes with process_document's fan-out (and a concurrent restore) on the document row
-    db.execute(sa_text("SELECT id FROM document WHERE id = :i FOR UPDATE"), {"i": doc.id})
+    # serializes with process_document's fan-out (and a concurrent restore) on the document rows; in id order so
+    # two requests stopping overlapping sets cannot deadlock
+    db.execute(sa_text("SELECT id FROM document WHERE id = ANY(:i) ORDER BY id FOR UPDATE"), {"i": doc_ids})
     n = db.execute(sa_text("UPDATE page SET status = 'stopped' WHERE id = ANY(:ids) AND status NOT IN "
                            "('ready', 'excluded')"), {"ids": list(page_ids)}).rowcount
     db.commit()
+    t3 = time.monotonic()
+    if t3 - t0 > 1:  # where a slow trash spent its time (the locks wait for documents being finalized right now)
+        log.warning("stopping %d documents (%d pages) took %.1fs: lookups %.1fs, jobs %.1fs, locks + pages %.1fs",
+                    len(doc_ids), len(page_ids), t3 - t0, t1 - t0, t2 - t1, t3 - t2)
     return n
 
 

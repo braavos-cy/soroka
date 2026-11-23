@@ -1,9 +1,15 @@
 """Classic computer-vision stages. Each estimator returns candidates (method, value, score, signals)."""
 import math
+import os
 from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
+
+# workers run one page each, one per core: OpenCV must not start its own thread per core in every one of them
+# (docker-compose.yml sets OMP_NUM_THREADS=1 for the workers; OpenCV's thread pool does not read it by itself)
+if os.environ.get("OMP_NUM_THREADS", "").isdigit():
+    cv2.setNumThreads(int(os.environ["OMP_NUM_THREADS"]))
 
 
 @dataclass
