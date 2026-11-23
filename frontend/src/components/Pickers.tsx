@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { CalendarDays, Clock, FileText, Folder as FolderIcon, FolderInput, FolderX, Loader2, Plus, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { CalendarDays, ChevronDown, Clock, FileText, Folder as FolderIcon, FolderInput, FolderX, Loader2, Plus, X } from 'lucide-react'
 import { api, Tag } from '../api'
 import { useT } from '../i18n'
 import { folderTree, useStore } from '../store'
@@ -205,6 +206,58 @@ export function DateRange({ label, from, to, onFrom, onTo }: { label: string; fr
       <span className="muted">–</span>
       <DateInput value={to} onChange={onTo} placeholder={t('date_to_ph')} title={`${label}: ${t('date_to_ph')}`} />
     </span>
+  )
+}
+
+/** A date range as a filter button (like the other filters): shows the range, or "Any"; pressing it opens a small card
+ *  with the from / to fields. `onChange` gets both ends at once (clearing sets both in one go). */
+export function DateRangeFilter({ label, from, to, onChange }: { label: string; from: string; to: string; onChange: (from: string, to: string) => void }) {
+  const { t } = useT()
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<React.CSSProperties>({})
+  const btn = useRef<HTMLButtonElement>(null)
+  const pop = useRef<HTMLDivElement>(null)
+  const fmt = (v: string) => new Date(v + 'T00:00:00').toLocaleDateString()
+  const shown = from && to ? `${fmt(from)} – ${fmt(to)}` : from ? `${t('date_from_ph')} ${fmt(from)}` : to ? `${t('date_to_ph')} ${fmt(to)}` : t('any')
+  useLayoutEffect(() => {
+    const r = open ? btn.current?.getBoundingClientRect() : null
+    if (r) setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 330)) })
+  }, [open])
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const down = (e: MouseEvent) => { const n = e.target as Node; if (!pop.current?.contains(n) && !btn.current?.contains(n)) close() }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); btn.current?.focus() } }
+    const scroll = (e: Event) => { if (!pop.current?.contains(e.target as Node)) close() }
+    document.addEventListener('mousedown', down)
+    document.addEventListener('keydown', key, true)
+    window.addEventListener('resize', close)
+    window.addEventListener('scroll', scroll, true)
+    return () => {
+      document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key, true)
+      window.removeEventListener('resize', close); window.removeEventListener('scroll', scroll, true)
+    }
+  }, [open])
+  return (
+    <>
+      <button ref={btn} type="button" className={'dd-btn date-filter' + (open ? ' open' : '')} aria-expanded={open} title={label} onClick={() => setOpen(!open)}>
+        <CalendarDays size={14} className="muted" />
+        <span className={'dd-val' + (from || to ? '' : ' muted')}>{shown}</span>
+        <ChevronDown size={14} className="dd-caret" />
+      </button>
+      {open && createPortal(
+        <div ref={pop} className="dd-pop date-pop" style={pos}>
+          <div className="date-pop-h">{label}</div>
+          <span className="date-range">
+            <DateInput value={from} onChange={(v) => onChange(v, to)} placeholder={t('date_from_ph')} title={`${label}: ${t('date_from_ph')}`} />
+            <span className="muted">–</span>
+            <DateInput value={to} onChange={(v) => onChange(from, v)} placeholder={t('date_to_ph')} title={`${label}: ${t('date_to_ph')}`} />
+          </span>
+          {(from || to) && <button type="button" className="link date-pop-clear" onClick={() => onChange('', '')}><X size={13} /> {t('clear_dates')}</button>}
+        </div>,
+        document.body,
+      )}
+    </>
   )
 }
 

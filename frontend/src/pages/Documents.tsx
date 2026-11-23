@@ -7,7 +7,7 @@ import { DND, DND_DOCS } from '../components/Sidebar'
 import { setMultiDragImage } from '../components/dragGhost'
 import UploadModal, { checkItems, dragVerdict, itemsFromDrop, skippedMessage, toUploads } from '../components/Upload'
 import { fmtMB, UpTask, useUploads } from '../components/uploads'
-import { DateRange, FileName, FolderMenu, fmtDate, PageThumb, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
+import { DateRangeFilter, FileName, FolderMenu, fmtDate, PageThumb, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Combo, Select, useDialog } from '../components/ui'
 import { ArchiveRestore, ArrowDownWideNarrow, ArrowUpNarrowWide, Ban, Files, Download, LayoutGrid, List, Pause, Play, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
 
@@ -483,10 +483,10 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           {/* only meaningful while files are being uploaded from this browser */}
           {(uploads.tasks.length > 0 || upFilter) && <Field label={t('up_filter')}><Select value={upFilter} onChange={(v) => setParam('upload', v)}
             options={[{ value: '', label: t('any') }, { value: 'uploading', label: t('up_f_uploading') }, { value: 'paused', label: t('up_f_paused') }, { value: 'failed', label: t('up_f_failed') }]} /></Field>}
-          <Field label={t('received')} wide><DateRange label={t('received')} from={params.get('received_from') || ''} to={params.get('received_to') || ''}
-            onFrom={(v) => setParam('received_from', v)} onTo={(v) => setParam('received_to', v)} /></Field>
-          <Field label={t('doc_date')} wide><DateRange label={t('doc_date')} from={params.get('date_from') || ''} to={params.get('date_to') || ''}
-            onFrom={(v) => setParam('date_from', v)} onTo={(v) => setParam('date_to', v)} /></Field>
+          {([['received', 'received'], ['date', 'doc_date']] as const).map(([k, label]) => (
+            <Field key={k} label={t(label)}><DateRangeFilter label={t(label)} from={params.get(`${k}_from`) || ''} to={params.get(`${k}_to`) || ''}
+              onChange={(f, to) => setParams((p) => { const n = new URLSearchParams(p); f ? n.set(`${k}_from`, f) : n.delete(`${k}_from`); to ? n.set(`${k}_to`, to) : n.delete(`${k}_to`); return n })} /></Field>
+          ))}
           {/* pick a sender / chat from the list, or type part of a name: "ant" finds every sender containing it */}
           {(['sender', 'chat'] as const).map((k) => (
             <Field key={k} label={t(k)}><Combo className="text-filter" placeholder={t('any')} value={params.get(k) || ''} onCommit={(v) => setParam(k, v)}

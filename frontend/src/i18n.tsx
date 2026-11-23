@@ -107,7 +107,7 @@ const en = {
   ctx_this_doc: 'this document', ctx_before: 'before', ctx_after: 'after', hit_title: 'File title', hit_context: 'Context', hit_text: 'OCR',
   search_log: 'Search log', unlinking: 'Unlinking…', conn_chats: 'Chats', conn_unregistered: 'Not registered', conn_no_chats: 'No registered chats yet.',
   conn_offline: 'offline', conn_disconnected: 'disconnected', conn_logged_out: 'logged out', prev: 'Previous', next: 'Next',
-  nav_documents: 'Documents', nav_rejected: 'Rejected', date_from_ph: 'from', date_to_ph: 'to', clear_date: 'Clear date', pick_date: 'Pick a date',
+  nav_documents: 'Documents', nav_rejected: 'Rejected', date_from_ph: 'from', date_to_ph: 'to', clear_date: 'Clear date', clear_dates: 'Clear', pick_date: 'Pick a date',
   // why a pipeline step needs checking ({n} = a number filled in)
   why_blurry: 'The photo is blurry.', why_dark: 'The photo is too dark.', why_glare: 'There is glare (bright overexposed spots) on the photo.',
   why_low_resolution: 'The image resolution is low ({n} px on the short side), small text may not be readable.',
@@ -248,7 +248,7 @@ const ru: Partial<Record<Key, string>> = {
   ctx_this_doc: 'этот документ', ctx_before: 'до', ctx_after: 'после', hit_title: 'Название', hit_context: 'Контекст', hit_text: 'OCR',
   search_log: 'Поиск по журналу', unlinking: 'Отвязка…', conn_chats: 'Чатов', conn_unregistered: 'Не зарегистрировано', conn_no_chats: 'Зарегистрированных чатов пока нет.',
   conn_offline: 'офлайн', conn_disconnected: 'отключён', conn_logged_out: 'вышел', prev: 'Предыдущая', next: 'Следующая',
-  nav_documents: 'Документы', nav_rejected: 'Отклонено', date_from_ph: 'с', date_to_ph: 'по', clear_date: 'Очистить дату', pick_date: 'Выбрать дату',
+  nav_documents: 'Документы', nav_rejected: 'Отклонено', date_from_ph: 'с', date_to_ph: 'по', clear_date: 'Очистить дату', clear_dates: 'Очистить', pick_date: 'Выбрать дату',
   why_blurry: 'Фото размыто.', why_dark: 'Фото слишком тёмное.', why_glare: 'На фото блики (засвеченные участки).',
   why_low_resolution: 'Низкое разрешение ({n} пикс. по короткой стороне), мелкий текст может не читаться.',
   why_accept_unsure: 'Непонятно, документ ли это: не похоже ни явно на документ, ни на обычное фото. Выберите ниже.',
