@@ -470,27 +470,27 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
       {view === 'trash' && <div className="filters muted small">{t('trash_help')}</div>}
       {showFilters && view === 'active' && (
         <div className="filters filter-panel">
-          <Select prefix={t('source')} value={params.get('source') || ''} onChange={(v) => setParam('source', v)}
-            options={[{ value: '', label: t('any') }, ...['upload', 'whatsapp', 'telegram', 'email', 'import'].map((x) => ({ value: x, label: t('source_' + x) }))]} />
-          <Select prefix={t('file_type')} value={params.get('file_type') || ''} onChange={(v) => setParam('file_type', v)}
+          <Field label={t('source')}><Select value={params.get('source') || ''} onChange={(v) => setParam('source', v)}
+            options={[{ value: '', label: t('any') }, ...['upload', 'whatsapp', 'telegram', 'email', 'import'].map((x) => ({ value: x, label: t('source_' + x) }))]} /></Field>
+          <Field label={t('file_type')}><Select value={params.get('file_type') || ''} onChange={(v) => setParam('file_type', v)}
             options={[{ value: '', label: t('any') }, ...fileTypes.map((x) => ({ value: x.value, label: `${x.label} (${x.count})` })),
               // a type picked earlier (link) that no document has any more stays shown
-              ...(params.get('file_type') && !fileTypes.some((x) => x.value === params.get('file_type')) ? [{ value: params.get('file_type')!, label: params.get('file_type')!.toUpperCase() }] : [])]} />
-          <Select prefix={t('review_status')} value={params.get('review') || ''} onChange={(v) => setParam('review', v)}
-            options={[{ value: '', label: t('any') }, { value: 'needs_review', label: t('needs_review') }, { value: 'check', label: t('check') }, { value: 'ok', label: t('ok') }]} />
-          <Select prefix={t('languages')} value={params.get('language') || ''} onChange={(v) => setParam('language', v)}
-            options={[{ value: '', label: t('any') }, { value: 'ru', label: 'RU' }, { value: 'en', label: 'EN' }, { value: 'mixed', label: 'RU + EN' }]} />
+              ...(params.get('file_type') && !fileTypes.some((x) => x.value === params.get('file_type')) ? [{ value: params.get('file_type')!, label: params.get('file_type')!.toUpperCase() }] : [])]} /></Field>
+          <Field label={t('review_status')}><Select value={params.get('review') || ''} onChange={(v) => setParam('review', v)}
+            options={[{ value: '', label: t('any') }, { value: 'needs_review', label: t('needs_review') }, { value: 'check', label: t('check') }, { value: 'ok', label: t('ok') }]} /></Field>
+          <Field label={t('languages')}><Select value={params.get('language') || ''} onChange={(v) => setParam('language', v)}
+            options={[{ value: '', label: t('any') }, { value: 'ru', label: 'RU' }, { value: 'en', label: 'EN' }, { value: 'mixed', label: 'RU + EN' }]} /></Field>
           {/* only meaningful while files are being uploaded from this browser */}
-          {(uploads.tasks.length > 0 || upFilter) && <Select prefix={t('up_filter')} value={upFilter} onChange={(v) => setParam('upload', v)}
-            options={[{ value: '', label: t('any') }, { value: 'uploading', label: t('up_f_uploading') }, { value: 'paused', label: t('up_f_paused') }, { value: 'failed', label: t('up_f_failed') }]} />}
-          <DateRange label={t('received')} from={params.get('received_from') || ''} to={params.get('received_to') || ''}
-            onFrom={(v) => setParam('received_from', v)} onTo={(v) => setParam('received_to', v)} />
-          <DateRange label={t('doc_date')} from={params.get('date_from') || ''} to={params.get('date_to') || ''}
-            onFrom={(v) => setParam('date_from', v)} onTo={(v) => setParam('date_to', v)} />
+          {(uploads.tasks.length > 0 || upFilter) && <Field label={t('up_filter')}><Select value={upFilter} onChange={(v) => setParam('upload', v)}
+            options={[{ value: '', label: t('any') }, { value: 'uploading', label: t('up_f_uploading') }, { value: 'paused', label: t('up_f_paused') }, { value: 'failed', label: t('up_f_failed') }]} /></Field>}
+          <Field label={t('received')} wide><DateRange label={t('received')} from={params.get('received_from') || ''} to={params.get('received_to') || ''}
+            onFrom={(v) => setParam('received_from', v)} onTo={(v) => setParam('received_to', v)} /></Field>
+          <Field label={t('doc_date')} wide><DateRange label={t('doc_date')} from={params.get('date_from') || ''} to={params.get('date_to') || ''}
+            onFrom={(v) => setParam('date_from', v)} onTo={(v) => setParam('date_to', v)} /></Field>
           {/* pick a sender / chat from the list, or type part of a name: "ant" finds every sender containing it */}
           {(['sender', 'chat'] as const).map((k) => (
-            <Combo key={k} className="text-filter" placeholder={t(k)} value={params.get(k) || ''} onCommit={(v) => setParam(k, v)}
-              load={(q) => api(`/api/documents/suggest?field=${k}&q=${encodeURIComponent(q)}`)} />
+            <Field key={k} label={t(k)}><Combo className="text-filter" placeholder={t('any')} value={params.get(k) || ''} onCommit={(v) => setParam(k, v)}
+              load={(q) => api(`/api/documents/suggest?field=${k}&q=${encodeURIComponent(q)}`)} /></Field>
           ))}
           {activeFilters > 0 && <button className="link reset-filters" onClick={resetFilters}><X size={14} /> {t('reset_filters')}</button>}
         </div>
@@ -544,4 +544,9 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
       {upload && <UploadModal folderId={folderId} onClose={() => setUpload(false)} />}
     </div>
   )
+}
+
+/** A filter with its name in small type on the box's top border, at the left (instead of "Name: value" inside). */
+function Field({ label, wide, children }: { label: string; wide?: boolean; children: React.ReactNode }) {
+  return <span className={'flt' + (wide ? ' flt-wide' : '')}><span className="flt-label">{label}</span>{children}</span>
 }

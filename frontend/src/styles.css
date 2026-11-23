@@ -267,6 +267,12 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .dd-item .dd-count { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .dd-empty { padding: 8px 10px; color: var(--muted); font-size: 13px; }
 .filters .dd-btn { padding: 3px 8px; font-size: 13px; }
+/* filter name: small, on the box's top border at the left; the row gaps leave room for it */
+.filter-panel { padding-top: 16px; row-gap: 18px; }
+.flt { position: relative; display: inline-flex; min-width: 0; }
+.flt-label { position: absolute; left: 7px; top: 0; transform: translateY(-55%); z-index: 1; padding: 0 4px; font-size: 12px; line-height: 1.2;
+  color: var(--muted); white-space: nowrap; pointer-events: none; background: linear-gradient(var(--panel2) 55%, var(--panel) 55%); border-radius: 2px; }
+.flt .dr-label { display: none; }
 
 /* dialogs */
 /* option with an explanation under its title (checkbox or radio) */
@@ -417,8 +423,9 @@ input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
   .filters { padding: 8px 10px; }
   /* filter panel: 2-column grid; date ranges, the text filters' row and "reset" take full rows */
   .filter-panel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .filter-panel > .dd-btn { width: 100%; min-width: 0; justify-content: space-between; }
-  .filter-panel > .date-range, .filter-panel > .reset-filters { grid-column: 1 / -1; }
+  .filter-panel > .flt > .dd-btn, .filter-panel > .flt > .text-filter { width: 100%; min-width: 0; justify-content: space-between; }
+  .filter-panel > .flt-wide, .filter-panel > .reset-filters { grid-column: 1 / -1; }
+  .filter-panel > .flt-wide > .date-range { width: 100%; }
   .filter-panel .date-range .date-in { flex: 1; }
   .filter-panel .dr-label { flex: 0 0 76px; white-space: normal; line-height: 1.2; }
   .filters.filter-panel > .text-filter { width: 100%; }
