@@ -245,11 +245,14 @@ function TagManager({ onClose }: { onClose: () => void }) {
       try { await api(`/api/tags/${tg.id}`, { method: 'DELETE' }); reload() } catch (e: any) { toast(e.detail) }
     }
   }
+  // built once for the dialog (each row used to build its own list of every tag, with its colour dot)
+  const sorted = useMemo(() => [...tags].sort((a, b) => a.name.localeCompare(b.name)), [tags])
+  const mergeItems = useMemo(() => tags.map((x) => ({ key: String(x.id), label: x.name, icon: <span className="dot" style={{ background: x.color }} /> })), [tags])
   return (
     <Modal onClose={onClose}>
       <h2>{t('manage_tags')}</h2>
       <table className="list"><tbody>
-        {[...tags].sort((a, b) => a.name.localeCompare(b.name)).map((tg) => (
+        {sorted.map((tg) => (
           <tr key={tg.id}>
             <td><input type="color" value={tg.color} onChange={(e) => upd(tg, { color: e.target.value })} className="color-input" /></td>
             <td><TextInput small defaultValue={tg.name} maxLength={Math.max(tagMaxLen, tg.name.length)}
@@ -257,7 +260,7 @@ function TagManager({ onClose }: { onClose: () => void }) {
             <td className="muted small">{tg.count}</td>
             <td>
               <Menu icon={<Merge size={14} />} label={t('merge_into')} align="right"
-                items={tags.filter((x) => x.id !== tg.id).map((x) => ({ key: String(x.id), label: x.name, icon: <span className="dot" style={{ background: x.color }} /> }))}
+                items={mergeItems.filter((x) => x.key !== String(tg.id))}
                 onSelect={(k) => merge(tg, Number(k))} />
             </td>
             <td><button className="icon danger" title={t('delete')} onClick={() => del(tg)}><Trash2 size={15} /></button></td>

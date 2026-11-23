@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { CalendarDays, FileText, Folder as FolderIcon, FolderInput, FolderX, Loader2, Plus, X } from 'lucide-react'
-import { api } from '../api'
+import { api, Tag } from '../api'
 import { useT } from '../i18n'
 import { folderTree, useStore } from '../store'
 import { Menu, Select } from './ui'
@@ -10,7 +10,10 @@ export function FolderSelect({ value, onChange, allowEmpty }: { value: number | 
   const { t } = useT()
   const opts = folderTree(folders).map((f) => ({ value: f.id as number | null, label: f.name, indent: f.depth, icon: <FolderIcon size={14} /> }))
   if (allowEmpty) opts.unshift({ value: null, label: t('no_folder'), indent: 0, icon: <FolderX size={14} /> })
-  return <Select value={value} options={opts} onChange={onChange} placeholder={t('no_folder')} icon={<FolderX size={14} />} />
+  // capped width (see .folder-select): a long folder name is cut with "…", the full name is in the tooltip
+  const cur = opts.find((o) => o.value === value)
+  return <Select value={value} options={opts} onChange={onChange} placeholder={t('no_folder')} icon={<FolderX size={14} />}
+    className="folder-select" title={cur?.label ?? t('no_folder')} />
 }
 
 /** "Move to folder" action menu. */
@@ -22,33 +25,42 @@ export function FolderMenu({ onPick, label }: { onPick: (id: number) => void; la
     onSelect={(k) => onPick(Number(k))} />
 }
 
+/** One ResizeObserver for every element that asks (each tag line on a card used to have its own). */
+const sizeWatchers = new Map<Element, () => void>()
+let sharedRO: ResizeObserver | null = null
+function watchSize(el: Element, cb: () => void): () => void {
+  sharedRO ??= new ResizeObserver((entries) => entries.forEach((e) => sizeWatchers.get(e.target)?.()))
+  sizeWatchers.set(el, cb)
+  sharedRO.observe(el)
+  return () => { sizeWatchers.delete(el); sharedRO?.unobserve(el) }
+}
+
 /** Tag chips. With singleLine the chips stay on one line that scrolls horizontally when they do not fit. */
-export function TagChips({ ids, onRemove, singleLine }: { ids: number[]; onRemove?: (id: number) => void; singleLine?: boolean }) {
-  const { tags } = useStore()
-  const byId = new Map(tags.map((t) => [t.id, t]))
-  const list = ids.map((id) => byId.get(id)).filter(Boolean) as typeof tags
+export const TagChips = memo(function TagChips({ ids, onRemove, singleLine }: { ids: number[]; onRemove?: (id: number) => void; singleLine?: boolean }) {
+  const { tagById } = useStore()
+  const list = ids.map((id) => tagById.get(id)).filter(Boolean) as Tag[]
   const ref = useRef<HTMLDivElement>(null)
   const [overflow, setOverflow] = useState(false)
   const [edge, setEdge] = useState({ l: false, r: false }) // more tags hidden to the left / right
+  const checkEdges = (el: HTMLElement) => {
+    const l = el.scrollLeft > 1, r = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+    setEdge((e) => (e.l === l && e.r === r ? e : { l, r }))
+  }
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const check = () => {
-      setOverflow(el.scrollWidth > el.clientWidth + 1)
-      const l = el.scrollLeft > 1, r = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
-      setEdge((e) => (e.l === l && e.r === r ? e : { l, r }))
-    }
+    const check = () => { setOverflow(el.scrollWidth > el.clientWidth + 1); checkEdges(el) }
     check()
-    const ro = new ResizeObserver(check)
-    ro.observe(el)
-    el.addEventListener('scroll', check, { passive: true })
-    return () => { ro.disconnect(); el.removeEventListener('scroll', check) }
+    return watchSize(el, check)
   }, [list.length, singleLine])
-  // vertical wheel scrolls sideways while there is room to scroll (page scrolling is not hijacked).
+  // only a line that overflows can scroll: the scroll and wheel listeners are set up for those alone.
+  // Vertical wheel scrolls sideways while there is room to scroll (page scrolling is not hijacked).
   // Native non-passive listener: React's onWheel is passive and cannot preventDefault.
   useEffect(() => {
     const el = ref.current
     if (!el || !overflow) return
+    const onScroll = () => checkEdges(el)
+    el.addEventListener('scroll', onScroll, { passive: true })
     const h = (e: WheelEvent) => {
       if (e.deltaX !== 0 || e.deltaY === 0) return
       const atEnd = e.deltaY > 0 ? el.scrollLeft + el.clientWidth >= el.scrollWidth - 1 : el.scrollLeft <= 0
@@ -57,7 +69,7 @@ export function TagChips({ ids, onRemove, singleLine }: { ids: number[]; onRemov
       e.preventDefault()
     }
     el.addEventListener('wheel', h, { passive: false })
-    return () => el.removeEventListener('wheel', h)
+    return () => { el.removeEventListener('wheel', h); el.removeEventListener('scroll', onScroll) }
   }, [overflow])
   const chips = list.map((tg) => (
     <span key={tg.id} className="chip"><span className="dot" style={{ background: tg.color }} />{tg.name}
@@ -67,7 +79,7 @@ export function TagChips({ ids, onRemove, singleLine }: { ids: number[]; onRemov
   return (
     <div ref={ref} className={'chips-line' + (overflow ? ' scrolling' : '') + (edge.l ? ' more-l' : '') + (edge.r ? ' more-r' : '')} onClick={(e) => overflow && e.stopPropagation()}>{chips}</div>
   )
-}
+})
 
 export const TAG_COLORS = ['#c2726b', '#c9a05f', '#6fa588', '#6d8fc4', '#9484c0', '#c283a3', '#6aa5a3', '#7b8794'] // muted; old bright ones were remapped in migration 0006
 export const randomTagColor = () => TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)]
@@ -134,7 +146,7 @@ let measureCtx: CanvasRenderingContext2D | null = null
 /** File-name style truncation: "a-very-long-scan-name.pdf" -> "a-very-lo…me.pdf".
  *  The tail (last 2 characters of the name + extension) always stays visible. The text is measured, so the
  *  result is one continuous string with no gap after the ellipsis; recomputed when the available width changes. */
-export function FileName({ name, className }: { name: string; className?: string }) {
+export function FileName({ name, className, tail: keep = 2 }: { name: string; className?: string; tail?: number }) {
   const n = name || '—'
   const ref = useRef<HTMLSpanElement>(null)
   const [text, setText] = useState(n)
@@ -150,7 +162,7 @@ export function FileName({ name, className }: { name: string; className?: string
       measureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`
       const width = (s: string) => measureCtx!.measureText(s).width
       if (width(n) <= w) return setText(n)
-      const m = n.match(/^(.*?)(.{0,2}\.[A-Za-z0-9]{1,6})$/)
+      const m = n.match(new RegExp(`^(.*?)(.{0,${keep}}\\.[A-Za-z0-9]{1,6})$`))
       const [head, tail] = m && m[1] ? [m[1], m[2]] : [n, '']
       let lo = 0, hi = head.length
       while (lo < hi) {
@@ -163,7 +175,7 @@ export function FileName({ name, className }: { name: string; className?: string
     const ro = new ResizeObserver(fit)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [n])
+  }, [n, keep])
   return <span ref={ref} className={'file-name' + (className ? ' ' + className : '')} title={n}>{text}</span>
 }
 

@@ -30,6 +30,16 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
   return (ct.includes('json') ? r.json() : r.text()) as Promise<T>
 }
 
+/** GET that resolves to null when the answer is exactly what `last` holds (the previous answer's text), so repeated
+ *  polls of unchanged data cost no parsing and no re-render. Pass the same ref each time. */
+export async function apiIfChanged<T = any>(path: string, last: { current: string | null }): Promise<T | null> {
+  const r: Response = await api(path, { raw: true })
+  const text = await r.text()
+  if (text === last.current) return null
+  last.current = text
+  return JSON.parse(text) as T
+}
+
 export async function downloadPost(path: string, body: any, filename: string) {
   const r: Response = await api(path, { body, raw: true })
   const blob = await r.blob()

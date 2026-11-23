@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, DocSummary, downloadPost } from '../api'
 import { plural, useT } from '../i18n'
@@ -17,6 +17,55 @@ const PAGE = 60
 const SORT_FIELDS = ['received', 'date', 'title', 'size', 'pages'] as const
 type SortField = typeof SORT_FIELDS[number]
 const SORT_DEFAULT_DIR: Record<SortField, 'asc' | 'desc'> = { received: 'desc', date: 'desc', title: 'asc', size: 'desc', pages: 'desc' }
+/** What a document card / row can do; one unchanging object for all of them (see `acts` in the page). */
+type CardActs = {
+  click: (d: DocSummary) => void; toggle: (id: number) => void; dragStart: (e: React.DragEvent, d: DocSummary) => void
+  rescue: (id: number) => void; restore: (id: number) => void
+}
+
+/** A document in the grid (and in search results). Memoized: redrawn only when its document or selection changes. */
+const DocCard = memo(function DocCard({ d, selected, view, acts }: { d: DocSummary; selected: boolean; view: string; acts: CardActs }) {
+  const { t, lang } = useT()
+  return (
+    <div data-doc-id={d.id} className={'doc-card' + (selected ? ' sel' : '')} onClick={() => acts.click(d)} draggable onDragStart={(e) => acts.dragStart(e, d)}>
+      <input type="checkbox" className="chk" checked={selected} onClick={(e) => e.stopPropagation()} onChange={() => acts.toggle(d.id)} />
+      <span className="tierdot"><TierBadge tier={d.needs_review ? 'low' : d.tier} status={d.status} /></span>
+      <div className="thumb"><PageThumb pageId={d.first_page_id} v={d.thumb_v} status={d.status} /></div>
+      <div className="body">
+        <div className="card-title">
+          <FileName name={d.title} className="t" />
+          {d.page_count > 0 && <span className="pages-count" title={plural(t, lang, d.page_count, 'pl_pages')}><Files size={13} />{d.page_count}</span>}
+        </div>
+        {view === 'rejected' && <button onClick={(e) => { e.stopPropagation(); acts.rescue(d.id) }}>{t('rescue')}</button>}
+        {view === 'trash' && <button onClick={(e) => { e.stopPropagation(); acts.restore(d.id) }}>{t('restore')}</button>}
+        {d.tags.length > 0 && <div className="card-tags"><TagChips ids={d.tags} singleLine /></div>}
+      </div>
+    </div>
+  )
+})
+
+/** A document in the list layout. Memoized like DocCard. */
+const DocRow = memo(function DocRow({ d, selected, view, folder, acts }: { d: DocSummary; selected: boolean; view: string; folder: string; acts: CardActs }) {
+  const { t } = useT()
+  return (
+    <tr data-doc-id={d.id} className={selected ? 'sel' : ''} onClick={() => acts.click(d)} style={{ cursor: 'pointer' }} draggable onDragStart={(e) => acts.dragStart(e, d)}>
+      <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => acts.toggle(d.id)} /></td>
+      <td className="title-cell"><FileName name={d.title} /><Snippet text={d.snippet} /></td>
+      <td className="small muted">{folder}</td>
+      <td><TagChips ids={d.tags} /></td>
+      <td className="small">{t('source_' + d.source)}{d.chat ? ` · ${d.chat}` : ''}</td>
+      <td className="small">{fmtDate(d.received_at, true)}</td>
+      <td><TierBadge tier={d.needs_review ? 'low' : d.tier} status={d.status} />{view === 'rejected' && <button className="link" onClick={(e) => { e.stopPropagation(); acts.rescue(d.id) }}>{t('rescue')}</button>}</td>
+    </tr>
+  )
+})
+
+/** The new list, with each document that did not change kept as the very same object (so its card is not redrawn). */
+function keepUnchanged(cur: DocSummary[], next: DocSummary[]): DocSummary[] {
+  const old = new Map(cur.map((d) => [d.id, d]))
+  return next.map((d) => { const o = old.get(d.id); return o && JSON.stringify(o) === JSON.stringify(d) ? o : d })
+}
+
 function parseSort(s: string | null): [SortField, 'asc' | 'desc'] {
   if (s === 'title') return ['title', 'asc'] // older links
   const m = /^(\w+)_(asc|desc)$/.exec(s || '')
@@ -102,10 +151,10 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const [upload, setUpload] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
   const [layout, setLayout] = useState<'grid' | 'list'>(() => { try { return (localStorage.getItem('layout') as any) || 'grid' } catch { return 'grid' } })
-  const [limit, setLimit] = useState(PAGE)
 
+  // the list's query, without paging
   const query = useCallback(() => {
-    const p = new URLSearchParams({ view, limit: String(limit) })
+    const p = new URLSearchParams({ view })
     const g = (k: string) => params.get(k) || ''
     if (g('q')) p.set('q', g('q'))
     if (g('folder') === 'none') p.set('unfiled', 'true')
@@ -115,22 +164,35 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     for (const k of ['source', 'file_type', 'review', 'status', 'sender', 'chat', 'received_from', 'received_to', 'date_from', 'date_to', 'sort', 'language'])
       if (g(k)) p.set(k, g(k))
     return p.toString()
-  }, [params, view, limit, user.include_subfolders])
+  }, [params, view, user.include_subfolders])
 
-  const shown = useRef('')
-  const loadSeq = useRef(0)// search-as-you-type: an answer to an older query must not replace a newer one
-  const load = useCallback(() => {
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+  const loadSeq = useRef(0) // search-as-you-type: an answer to an older query must not replace a newer one
+  const shown = useRef<string | null>(null) // the text of the answer on screen (offset 0)
+  /** offset 0: (re)load the first n documents in place of the list; offset > 0: add the next n ("Load more") */
+  const fetchList = useCallback((offset: number, n: number) => {
     const seq = ++loadSeq.current
     setLoading(true)
-    api(`/api/documents?${query()}`).then((r) => { if (seq !== loadSeq.current) return
+    api(`/api/documents?${query()}&offset=${offset}&limit=${n}`, { raw: true }).then((res: Response) => res.text()).then((text) => {
+      if (seq !== loadSeq.current) return
       // same answer as what is on screen (next letter of the same word, background refresh): leave the list alone
-      const sig = JSON.stringify(r.items)
-      if (sig !== shown.current) { shown.current = sig; setItems(r.items) }
+      if (offset === 0) { if (text === shown.current) return; shown.current = text } else shown.current = null
+      const r = JSON.parse(text)
       setTotal(r.total)
+      setItems((cur) => {
+        const next = keepUnchanged(cur, r.items)
+        if (offset === 0) return next
+        const have = new Set(cur.map((d) => d.id)) // the list may have shifted since: no document twice
+        return [...cur, ...next.filter((d) => !have.has(d.id))]
+      })
     })
       .catch((e) => { if (seq === loadSeq.current) toast(e.detail) }).finally(() => { if (seq === loadSeq.current) setLoading(false) })
   }, [query])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { fetchList(0, PAGE) }, [fetchList])
+  /** reload everything loaded so far, in one request */
+  const load = useCallback(() => fetchList(0, Math.max(PAGE, itemsRef.current.length)), [fetchList])
+  const loadMore = () => fetchList(itemsRef.current.length, PAGE)
   // arriving from a document ("Show in folders"): scroll to it and flash it once; load further pages until it is found
   const loc = useLocation()
   const hl: number | undefined = (loc.state as any)?.highlight
@@ -138,7 +200,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   useEffect(() => {
     if (!hl || hlDone.current === loc.key || loading) return
     if (!items.some((d) => d.id === hl)) {
-      if (items.length && items.length < total && limit < 2000) setLimit(limit + PAGE)
+      if (items.length && items.length < total && items.length < 2000) loadMore()
       else if (items.length >= total && total > 0) hlDone.current = loc.key
       return
     }
@@ -149,15 +211,14 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     el.classList.add('flash')
     setTimeout(() => el.classList.remove('flash'), 1600)
   }, [hl, loc.key, items, total, loading, layout])
-  useEffect(() => { setSel(new Set()); setUpSel(new Set()); setLimit(PAGE) }, [params, view])
+  useEffect(() => { setSel(new Set()); setUpSel(new Set()) }, [params, view])
+  // something changed (an upload, a processing step, another user's edit): the store's status check notices within 5 s
+  // and tells every open page; that also covers documents being processed, so the list has no poll of its own
   useEffect(() => {
     const h = () => load()
     window.addEventListener('soroka:reload', h)
-    // keep polling while something is processing
-    const busy = items.some((d) => ['queued', 'processing'].includes(d.status))
-    const i = busy ? setInterval(load, 4000) : undefined
-    return () => { window.removeEventListener('soroka:reload', h); if (i) clearInterval(i) }
-  }, [load, items])
+    return () => window.removeEventListener('soroka:reload', h)
+  }, [load])
 
   const setParam = (k: string, v: string) => { const p = new URLSearchParams(params); v ? p.set(k, v) : p.delete(k); setParams(p) }
   // rubber-band selection: press on empty space and drag; Ctrl/Shift adds to the selection, a plain click clears it
@@ -173,36 +234,43 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     const base = additive ? new Set(sel) : new Set<number>()
     const upBase = additive ? new Set(upSel) : new Set<string>()
     const scroller = wrap.closest('.content') as HTMLElement | null
-    let moved = false
+    // every card's box relative to the list, measured once: scrolling moves the list and its cards together
+    const boxes = <K,>(q: string, key: (el: HTMLElement) => K) => Array.from(wrap.querySelectorAll<HTMLElement>(q)).map((el) => {
+      const b = el.getBoundingClientRect()
+      return { key: key(el), x: b.left - r0.left, y: b.top - r0.top, w: b.width, h: b.height }
+    })
+    const docBoxes = boxes('[data-doc-id]', (el) => Number(el.dataset.docId))
+    const upBoxes = boxes('[data-upload-id]', (el) => el.dataset.uploadId!)
+    const hit = <K,>(list: { key: K; x: number; y: number; w: number; h: number }[], from: Set<K>, x: number, y: number, w: number, h: number) => {
+      const next = new Set(from)
+      for (const b of list) if (b.x < x + w && b.x + b.w > x && b.y < y + h && b.y + b.h > y) next.add(b.key)
+      return next
+    }
+    const same = <K,>(a: Set<K>, b: Set<K>) => a.size === b.size && [...a].every((k) => b.has(k))
+    let moved = false, frame = 0, last: MouseEvent | null = null
     e.preventDefault()
-    const move = (ev: MouseEvent) => {
+    // mouse moves are handled once per frame, with the latest position
+    const step = () => {
+      frame = 0
+      const ev = last!
       const r = wrap.getBoundingClientRect()
       const cx = ev.clientX - r.left, cy = ev.clientY - r.top
       if (!moved && Math.abs(cx - sx) + Math.abs(cy - sy) < 5) return
       moved = true
       const x = Math.min(sx, cx), y = Math.min(sy, cy), w = Math.abs(cx - sx), h = Math.abs(cy - sy)
       setBand({ x, y, w, h })
-      const next = new Set(base)
-      wrap.querySelectorAll<HTMLElement>('[data-doc-id]').forEach((el) => {
-        const b = el.getBoundingClientRect()
-        const bx = b.left - r.left, by = b.top - r.top
-        if (bx < x + w && bx + b.width > x && by < y + h && by + b.height > y) next.add(Number(el.dataset.docId))
-      })
-      setSel(next)
-      const upNext = new Set(upBase)
-      wrap.querySelectorAll<HTMLElement>('[data-upload-id]').forEach((el) => {
-        const b = el.getBoundingClientRect()
-        const bx = b.left - r.left, by = b.top - r.top
-        if (bx < x + w && bx + b.width > x && by < y + h && by + b.height > y) upNext.add(el.dataset.uploadId!)
-      })
-      setUpSel(upNext)
+      const next = hit(docBoxes, base, x, y, w, h), upNext = hit(upBoxes, upBase, x, y, w, h)
+      setSel((cur) => (same(cur, next) ? cur : next)) // unchanged selection: the list is not redrawn
+      setUpSel((cur) => (same(cur, upNext) ? cur : upNext))
       if (scroller) {  // auto-scroll near the edges
         const sr = scroller.getBoundingClientRect()
         if (ev.clientY > sr.bottom - 40) scroller.scrollTop += 20
         else if (ev.clientY < sr.top + 100) scroller.scrollTop -= 20
       }
     }
+    const move = (ev: MouseEvent) => { last = ev; if (!frame) frame = requestAnimationFrame(step) }
     const up = () => {
+      if (frame) { cancelAnimationFrame(frame); step() } // the last move still counts
       window.removeEventListener('mousemove', move)
       window.removeEventListener('mouseup', up)
       setBand(null)
@@ -211,7 +279,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
   }
-  const toggle = (id: number) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s) }
+  const toggle = (id: number) => setSel((cur) => { const s = new Set(cur); s.has(id) ? s.delete(id) : s.add(id); return s })
   const upToggle = (id: string) => { const s = new Set(upSel); s.has(id) ? s.delete(id) : s.add(id); setUpSel(s) }
   // uploads in progress: only in the main list, only those going to the folder shown; optional state filter
   const upFilter = params.get('upload') || ''
@@ -241,7 +309,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const rescue = async (id: number) => { await api(`/api/documents/${id}/rescue`, { method: 'POST' }); load(); reload() }
   const purge = async (ids: number[]) => {
     if (!(await dlg.confirm({ title: t('purge') + '?', message: t('confirm_purge'), ok: t('purge'), danger: true }))) return
-    for (const id of ids) await api(`/api/documents/${id}`, { method: 'DELETE' })
+    try { await api('/api/documents/purge', { body: { ids } }) } catch (e: any) { toast(e.detail) }
     setSel(new Set()); load(); reload()
   }
   const emptyTrash = async () => { if (await dlg.confirm({ title: t('empty_trash') + '?', message: t('confirm_purge'), ok: t('empty_trash'), danger: true })) { await api('/api/trash/empty', { method: 'POST' }); load(); reload() } }
@@ -326,22 +394,17 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     else return nav(`/doc/${d.id}`)
     nav(`/doc/${d.id}?${p}`)
   }
-  const card = (d: DocSummary) => (
-    <div key={d.id} data-doc-id={d.id} className={'doc-card' + (sel.has(d.id) ? ' sel' : '')} onClick={() => (selecting ? toggle(d.id) : open(d))} draggable onDragStart={(e) => dragStart(e, d)}>
-      <input type="checkbox" className="chk" checked={sel.has(d.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(d.id)} />
-      <span className="tierdot"><TierBadge tier={d.needs_review ? 'low' : d.tier} status={d.status} /></span>
-      <div className="thumb"><PageThumb pageId={d.first_page_id} v={d.thumb_v} status={d.status} /></div>
-      <div className="body">
-        <div className="card-title">
-          <FileName name={d.title} className="t" />
-          {d.page_count > 0 && <span className="pages-count" title={plural(t, lang, d.page_count, 'pl_pages')}><Files size={13} />{d.page_count}</span>}
-        </div>
-        {view === 'rejected' && <button onClick={(e) => { e.stopPropagation(); rescue(d.id) }}>{t('rescue')}</button>}
-        {view === 'trash' && <button onClick={(e) => { e.stopPropagation(); api('/api/documents/bulk', { body: { ids: [d.id], action: 'restore' } }).then(() => { setSel((o) => { const n = new Set(o); n.delete(d.id); return n }); load(); reload() }).catch((err) => toast(err.detail)) }}>{t('restore')}</button>}
-        {d.tags.length > 0 && <div className="card-tags"><TagChips ids={d.tags} singleLine /></div>}
-      </div>
-    </div>
-  )
+  const restore = (id: number) => api('/api/documents/bulk', { body: { ids: [id], action: 'restore' } })
+    .then(() => { setSel((o) => { const n = new Set(o); n.delete(id); return n }); load(); reload() }).catch((err) => toast(err.detail))
+  // the cards get one unchanging set of actions that always calls the current handlers, so a card is redrawn only
+  // when its document or its selection changes
+  const actsNow = useRef<CardActs>(null as any)
+  actsNow.current = { click: (d) => (selecting ? toggle(d.id) : open(d)), toggle, dragStart, rescue, restore }
+  const acts = useMemo<CardActs>(() => ({
+    click: (d) => actsNow.current.click(d), toggle: (id) => actsNow.current.toggle(id),
+    dragStart: (e, d) => actsNow.current.dragStart(e, d), rescue: (id) => actsNow.current.rescue(id), restore: (id) => actsNow.current.restore(id),
+  }), [])
+  const card = (d: DocSummary) => <DocCard key={d.id} d={d} selected={sel.has(d.id)} view={view} acts={acts} />
   return (
     <div className={sel.size + upSel.size > 0 ? 'has-selection' : undefined} {...fileDrop}>
       {/* while documents are selected the selection actions replace the regular toolbar (same place, same height) */}
@@ -459,20 +522,12 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           <tbody>
             {upVisible.map((u) => <UploadRow key={u.id} {...upProps(u)} />)}
             {docsShown.map((d) => (
-              <tr key={d.id} data-doc-id={d.id} className={sel.has(d.id) ? 'sel' : ''} onClick={() => (selecting ? toggle(d.id) : open(d))} style={{ cursor: 'pointer' }} draggable onDragStart={(e) => dragStart(e, d)}>
-                <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(d.id)} onChange={() => toggle(d.id)} /></td>
-                <td className="title-cell"><FileName name={d.title} /><Snippet text={d.snippet} /></td>
-                <td className="small muted">{folderPath(folders, d.folder_id)}</td>
-                <td><TagChips ids={d.tags} /></td>
-                <td className="small">{t('source_' + d.source)}{d.chat ? ` · ${d.chat}` : ''}</td>
-                <td className="small">{fmtDate(d.received_at, true)}</td>
-                <td><TierBadge tier={d.needs_review ? 'low' : d.tier} status={d.status} />{view === 'rejected' && <button className="link" onClick={(e) => { e.stopPropagation(); rescue(d.id) }}>{t('rescue')}</button>}</td>
-              </tr>
+              <DocRow key={d.id} d={d} selected={sel.has(d.id)} view={view} folder={folderPath(folders, d.folder_id)} acts={acts} />
             ))}
           </tbody>
         </table>
       )}
-      {!upFilter && items.length < total && <div style={{ textAlign: 'center', padding: 16 }}><button onClick={() => setLimit(limit + PAGE)}>{t('load_more')}</button></div>}
+      {!upFilter && items.length < total && <div style={{ textAlign: 'center', padding: 16 }}><button disabled={loading} onClick={loadMore}>{t('load_more')}</button></div>}
       </div>
       {upload && <UploadModal folderId={folderId} onClose={() => setUpload(false)} />}
     </div>

@@ -1,5 +1,6 @@
 .env
 .idea/
+.venv
 node_modules/
 dist/
 __pycache__/
@@ -10,3 +11,4 @@ connectors/whatsapp-test/downloads/
 .deploy.lock
 backend/eval/data*/
 backend/eval/results/
+graphify-out

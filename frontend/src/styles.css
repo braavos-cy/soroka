@@ -158,6 +158,11 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .stage-h { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; }
 .stage-h:hover { background: var(--panel2); } .stage-h .n { flex: 1; }
 .stage-b { padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+/* why the step needs checking, in plain words */
+.stage-why { display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 1.35; }
+.stage-why .icon-text { align-items: flex-start; gap: 6px; }
+.stage-why svg { color: var(--warn); flex: none; margin-top: 2px; }
+.stage-why.skip .icon-text:first-child { color: var(--muted); } .stage-why.skip .icon-text:first-child svg { color: var(--muted); }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12px; }
 .kv > :nth-child(odd) { color: var(--muted); }
 .tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 8px; position: sticky; top: 0; background: var(--panel); z-index: 2; }
@@ -165,16 +170,19 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .tabs button.active { border-bottom-color: var(--accent); color: var(--text); background: none; }
 .doc-view { display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); height: 100%; } /* column never wider than the pane, whatever is inside */
 .doc-head { display: flex; flex-direction: column; min-width: 0; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
-.dh-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.dh-meta { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.dh-meta > * { flex: none; } .dh-meta > .chips-line { flex: 1 1 0; width: 0; }
-/* the name field is as wide as the name: the field and an invisible copy of its text share one grid cell, the
-   copy sets the width (up to the space in the header, then the name is cut with "…") */
-.doc-head .title-size { display: inline-grid; grid-template-columns: minmax(0, auto); flex: 0 1 auto; min-width: 0; max-width: 100%; font-size: 16px; font-weight: 600; }
-.doc-head .title-size::after { content: attr(data-value); visibility: hidden; white-space: pre; overflow: hidden; padding: 0 9px; min-width: 2ch; }
-.doc-head .title-size::after, .doc-head .title-size > .title-input { grid-area: 1 / 1; }
-.doc-head .title-input { font-size: inherit; font-weight: inherit; border-color: transparent; background: transparent; width: 100%; min-width: 0; text-overflow: ellipsis; }
+/* one line: back, name, show in folders, tags, actions */
+.dh-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dh-row > * { flex: none; } .dh-row > .chips-line { flex: 1 1 0; width: 0; }
+/* the name: as wide as the name, at most 20% of the bar (then shortened in the middle; .title-show lies over the field) */
+.doc-head .title-box { position: relative; flex: 0 1 auto; min-width: 0; max-width: 20%; height: 32px; font-size: 16px; font-weight: 600; }
+.doc-head .title-sizer { display: block; visibility: hidden; white-space: pre; overflow: hidden; padding: 0 10px; line-height: 32px; }
+.doc-head .title-input { position: absolute; left: 0; top: 0; width: 100%; height: 100%; font-size: inherit; font-weight: inherit;
+  border-color: transparent; background: transparent; color: transparent; caret-color: var(--text); }
 .doc-head .title-input:hover { border-color: var(--border); }
+.doc-head .title-show { position: absolute; left: 9px; right: 9px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+/* editing: the field opens over the rest of the bar, everything else is dimmed */
+.doc-head .title-box.editing .title-input { z-index: 5; color: var(--text); background: var(--panel); border-color: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.12); }
+.dh-row:has(.title-box.editing) > :not(.title-box) { opacity: .4; transition: opacity .12s; }
 .ctx-msg { padding: 6px 8px; border-radius: 4px; background: var(--panel2); font-size: 13px; }
 .ctx-msg .who { font-size: 11px; color: var(--muted); }
 .pre { white-space: pre-wrap; font-size: 13px; line-height: 1.45; background: var(--panel2); padding: 10px; border-radius: 5px; max-height: 50vh; overflow: auto; }
@@ -228,6 +236,11 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 /* dropdowns (custom select / menu) */
 .dd-btn { gap: 6px; max-width: 100%; }
 .dd-btn .dd-val { overflow: hidden; text-overflow: ellipsis; text-align: left; }
+/* Select: all labels stacked in one cell, only the current one visible, so the width is the longest choice's */
+.dd-btn .dd-fixed { display: inline-grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.dd-btn .dd-fixed > span { grid-area: 1 / 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dd-btn .dd-fixed > .dd-sizer { visibility: hidden; }
+.dd-btn.folder-select { max-width: min(260px, 100%); }
 .dd-btn .dd-caret { color: var(--muted); margin-left: 2px; transition: transform .12s; }
 .dd-btn.open { border-color: var(--accent); } .dd-btn.open .dd-caret { transform: rotate(180deg); }
 .dd-pop { position: fixed; z-index: 300; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 5px; box-shadow: 0 8px 24px rgba(0,0,0,.14); overflow: hidden; max-width: 360px; }
@@ -418,7 +431,6 @@ input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
   .sel-actions > button .dd-caret { display: none; }
   body:has(.has-selection) .topbar nav.sections { display: none; } /* the selection actions take the tab bar's place */
   .sel-actions > button .dd-val { overflow: visible; text-align: center; }
-  .doc-head .dh-meta { padding-left: 0; }
   .doc-head .dl-btn .dd-val, .doc-head .dl-btn .dd-caret { display: none; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 10px; }
   .doc-card .thumb { height: 150px; }
@@ -432,7 +444,6 @@ input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
   .results { min-height: 0; }
   /* document view: one column, page image first, then the pipeline / info panel */
   .doc-head { padding: 8px 10px; gap: 6px; }
-  .doc-head .title-input { min-width: 0; }
   .viewer { display: block; height: auto; min-width: 0; } /* grid item: never as wide as a long thumbnail strip */
   .viewer > * { min-width: 0; }
   .viewer .stage-area { padding: 8px; overflow: visible; }

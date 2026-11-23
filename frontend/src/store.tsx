@@ -1,12 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { api, Folder, Tag, User } from './api'
+import { api, apiIfChanged, Folder, Tag, User } from './api'
 import { errText, useT } from './i18n'
 
 type Store = {
   user: User
   folders: Folder[]
   tags: Tag[]
+  tagById: Map<number, Tag> // one lookup for every tag list on the page
   reviewCount: number
   rejectedNew: number
   tagMaxLen: number
@@ -36,9 +37,11 @@ export function StoreProvider({ user: initialUser, children }: { user: User; chi
   const path = useRef(loc.pathname)
   path.current = loc.pathname
   const version = useRef<string | null>(null)
+  // reloaded whenever anything changes (each processing step too): a list that came back the same is not replaced
+  const lastFolders = useRef<string | null>(null), lastTags = useRef<string | null>(null)
   const loadLists = useCallback(() => {
-    api<Folder[]>('/api/folders').then(setFolders).catch(() => {})
-    api<Tag[]>('/api/tags').then(setTags).catch(() => {})
+    apiIfChanged<Folder[]>('/api/folders', lastFolders).then((f) => f && setFolders(f)).catch(() => {})
+    apiIfChanged<Tag[]>('/api/tags', lastTags).then((t) => t && setTags(t)).catch(() => {})
   }, [])
   // stats carry a fingerprint of all listed data: when it changes (new upload, a reject, processing finished,
   // another user's edit…) every open page is told to reload via the 'soroka:reload' event
@@ -64,9 +67,19 @@ export function StoreProvider({ user: initialUser, children }: { user: User; chi
     return () => { clearInterval(i); document.removeEventListener('visibilitychange', vis) }
   }, [reload, poll])
   useEffect(() => { if (loc.pathname === '/rejected') poll() }, [loc.pathname])
-  const toast = useCallback((m: string) => { setMsg(m); setTimeout(() => setMsg(null), 3500) }, [])
+  // a new message restarts the timer (the previous message's timer used to hide it early)
+  const toastTimer = useRef<number>()
+  const toast = useCallback((m: string) => {
+    setMsg(m)
+    window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setMsg(null), 3500)
+  }, [])
+  const tagById = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags])
+  // the same object while nothing in it changed: a navigation or a toast no longer redraws every component using the store
+  const value = useMemo(() => ({ user, folders, tags, tagById, reviewCount, rejectedNew, tagMaxLen, docTotal, unfiledTotal, reload, updateUser, toast }),
+    [user, folders, tags, tagById, reviewCount, rejectedNew, tagMaxLen, docTotal, unfiledTotal, reload, updateUser, toast])
   return (
-    <StoreCtx.Provider value={{ user, folders, tags, reviewCount, rejectedNew, tagMaxLen, docTotal, unfiledTotal, reload, updateUser, toast }}>
+    <StoreCtx.Provider value={value}>
       {children}
       {msg && <div className="toast">{errText(t, msg)}</div>}
     </StoreCtx.Provider>

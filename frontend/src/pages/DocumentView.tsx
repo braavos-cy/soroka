@@ -1,14 +1,23 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useT } from '../i18n'
 import { folderPath, useStore } from '../store'
-import { fmtBytes, fmtDate, PageThumb, TagAdder, TagChips, TierBadge } from '../components/Pickers'
+import { FileName, fmtBytes, fmtDate, PageThumb, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Menu, Select, useDialog } from '../components/ui'
-import { CropEditor, MeshEditor } from '../components/PageEditors'
-import { ArchiveRestore, ArrowDown, ArrowLeft, ArrowUp, Check, CheckCheck, Crop, Download, FolderSearch, Grid3x3, History, Layers2, Loader2, MoreHorizontal, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
+import { AlertTriangle, ArchiveRestore, ArrowDown, Info, ArrowLeft, ArrowUp, Check, CheckCheck, Crop, Download, FolderSearch, Grid3x3, History, Layers2, Loader2, MoreHorizontal, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
 
-const STAGES = ['quality', 'acceptance', 'crop', 'dewarp', 'orientation', 'deskew', 'cleanup', 'ocr', 'layout', 'consistency', 'outputs']
+// the crop / mesh editors: loaded the first time one is opened
+const CropEditor = lazy(() => import('../components/PageEditors').then((m) => ({ default: m.CropEditor })))
+const MeshEditor = lazy(() => import('../components/PageEditors').then((m) => ({ default: m.MeshEditor })))
+
+// Pipeline tab: only the steps the user can adjust (consistency is shown inside OCR, it checks the OCR result).
+// The automatic, read-only steps are listed in the Info tab.
+const TOOL_STAGES = ['acceptance', 'crop', 'dewarp', 'orientation', 'deskew', 'cleanup', 'ocr']
+const INFO_STAGES = ['quality', 'layout', 'outputs']
+const TIER_RANK: Record<string, number> = { low: 0, medium: 1, high: 2 }
+const worstTier = (...ts: (string | null | undefined)[]) =>
+  ts.filter((x): x is string => !!x && x in TIER_RANK).sort((a, b) => TIER_RANK[a] - TIER_RANK[b])[0] ?? null
 type Pt = [number, number]
 
 // what the badge under a page thumbnail shows: a processing state, or the quality tier (reviewed = OK)
@@ -60,7 +69,20 @@ export default function DocumentView() {
     if (i >= 0) setPageIdx(i)
   }, [thFilter, curCat, doc])
 
-  const loadDoc = useCallback(() => api(`/api/documents/${id}`).then(setDoc).catch((e) => toast(e.detail)), [id])
+  // the document and the open page are polled while processing and reloaded on every change anywhere:
+  // an answer is dropped when another document / page was opened meanwhile (a late one used to replace it), and an
+  // answer exactly like the last one is not applied (no redraw of the whole view, thumbnails included)
+  const openDoc = useRef(id)
+  openDoc.current = id
+  const lastDoc = useRef<string | null>(null)
+  const loadDoc = useCallback(() => {
+    const want = id
+    return api(`/api/documents/${want}`, { raw: true }).then((r: Response) => r.text()).then((text) => {
+      if (openDoc.current !== want || text === lastDoc.current) return
+      lastDoc.current = text
+      setDoc(JSON.parse(text))
+    }).catch((e) => toast(e.detail))
+  }, [id])
   useEffect(() => { loadDoc() }, [loadDoc])
   // a page number from the address that the document does not have (pages removed since): the last page
   useEffect(() => { if (doc?.pages?.length && pageIdx >= doc.pages.length) setPageIdx(doc.pages.length - 1) }, [doc?.pages?.length, pageIdx])
@@ -76,8 +98,19 @@ export default function DocumentView() {
     if (r.left < l.left || r.right > l.right) list.scrollLeft += r.left - l.left - (l.width - r.width) / 2
   }, [pageIdx, hasDoc, thFilter])
   const pageSummary = doc?.pages?.[pageIdx]
-  const loadPage = useCallback(() => { if (pageSummary) api(`/api/pages/${pageSummary.id}`).then(setPage) }, [pageSummary?.id])
-  useEffect(() => { setPage(null); setMode('result'); setPreview(null); loadPage() }, [pageSummary?.id])
+  const openPage = useRef<number | undefined>(undefined)
+  openPage.current = pageSummary?.id
+  const lastPage = useRef<string | null>(null)
+  const loadPage = useCallback(() => {
+    const want = pageSummary?.id
+    if (want == null) return
+    api(`/api/pages/${want}`, { raw: true }).then((r: Response) => r.text()).then((text) => {
+      if (openPage.current !== want || text === lastPage.current) return
+      lastPage.current = text
+      setPage(JSON.parse(text))
+    }).catch(() => { /* the next poll / reload tries again */ })
+  }, [pageSummary?.id])
+  useEffect(() => { setPage(null); lastPage.current = null; setMode('result'); setPreview(null); loadPage() }, [pageSummary?.id])
   // poll while processing
   const busy = page && ['queued', 'processing'].includes(page.status) || doc && ['queued', 'processing'].includes(doc.status)
   useEffect(() => {
@@ -96,6 +129,7 @@ export default function DocumentView() {
   // show the change at once (the server re-indexes the whole text on every change, which takes a moment); on failure reload the real state
   const patch = async (body: any) => {
     setDoc((d: any) => d && { ...d, ...(body.tag_ids ? { tags: body.tag_ids } : {}), ...(body.title != null ? { title: body.title } : {}) })
+    lastDoc.current = null // what is shown is no longer the last answer: the next one is applied even if unchanged
     try { await api(`/api/documents/${id}`, { method: 'PATCH', body }); loadDoc(); reloadStore() } catch (e: any) { toast(e.detail); loadDoc() }
   }
   const edit = async (stage: string, value: any, reset = false) => {
@@ -148,15 +182,13 @@ export default function DocumentView() {
   }
   return (
     <div className="doc-view">
-      {/* row 1: back, title; row 2: where it is, its tags (one line, scrolls when they do not fit), actions */}
+      {/* one line: back, show in folders, name (fixed share of the bar), its tags (scroll when they do not fit), actions */}
       <div className="doc-head">
         <div className="dh-row">
           <button className="icon" onClick={goBack} title={t('back')}><ArrowLeft size={18} /></button>
+          <button className="icon" onClick={() => showPlace()} title={t('show_in_folders') + ': ' + (doc.folder_id ? folderPath(folders, doc.folder_id) : t('no_folder'))}><FolderSearch size={16} /></button>
           {/* an empty title is not saved: clearing is only to type a new one */}
           <TitleInput title={doc.title} onSave={(v) => patch({ title: v })} />
-        </div>
-        <div className="dh-meta">
-          <button onClick={() => showPlace()} title={doc.folder_id ? folderPath(folders, doc.folder_id) : t('no_folder')}><FolderSearch size={15} /> <span className="lbl-phone-hide">{t('show_in_folders')}</span></button>
           <TagAdder exclude={doc.tags} onAdd={(tid) => patch({ tag_ids: [...doc.tags, tid] })} />
           <TagChips singleLine ids={doc.tags} onRemove={(tid) => patch({ tag_ids: doc.tags.filter((x: number) => x !== tid) })} />
           {doc.status === 'rejected' && <button className="primary" onClick={() => post(`/api/documents/${doc.id}/rescue`)}>{t('rescue')}</button>}
@@ -205,7 +237,7 @@ export default function DocumentView() {
             {(['pipeline', 'info', 'text'] as const).map((k) => <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{t(k)}</button>)}
           </div>
           {tab === 'pipeline' && page && <PipelinePanel page={page} edit={edit} post={post} setMode={setMode} mode={mode} setPreview={setPreview} />}
-          {tab === 'info' && <InfoPanel doc={doc} q={q} focus={focus} />}
+          {tab === 'info' && <InfoPanel doc={doc} q={q} focus={focus} page={page} pageNo={(doc.pages?.length || 0) > 1 ? pageIdx + 1 : null} />}
           {tab === 'text' && page && <div className="page-pad"><div className="pre">{page.text ? <Marked text={page.text} q={q} scroll at={at} /> : t('no_text')}</div></div>}
         </div>
       </div>
@@ -265,17 +297,33 @@ function Marked({ text, q, scroll, at }: { text: string; q: string; scroll?: boo
 /** The document's name, edited in place: as wide as the name (an invisible copy of the text sizes the field; it
  *  grows and shrinks while typing, up to the width of the header). Saved on blur or Enter, Esc puts the old name
  *  back; an emptied name is not saved. No clear button here. */
+/** The name field: a fixed share of the header bar, the name shortened in the middle ("long-na…me-tail.pdf").
+ *  While editing, the field opens over the rest of the bar to its right end (the other controls are dimmed),
+ *  and goes back to its small size afterwards. */
 function TitleInput({ title, onSave }: { title: string; onSave: (v: string) => void }) {
   const [v, setV] = useState(title)
+  const [width, setWidth] = useState<number | null>(null)
+  const box = useRef<HTMLSpanElement>(null)
   useEffect(() => setV(title), [title])
-  const save = () => { const x = v.trim(); if (!x) setV(title); else if (x !== title) onSave(x) }
+  const save = () => { setWidth(null); const x = v.trim(); if (!x) setV(title); else if (x !== title) onSave(x) }
+  const open = () => {
+    const b = box.current, row = b?.closest('.dh-row') as HTMLElement | null
+    if (!b || !row) return
+    const pad = parseFloat(getComputedStyle(row).paddingRight) || 0
+    setWidth(row.getBoundingClientRect().right - pad - b.getBoundingClientRect().left)
+  }
   return (
-    <span className="title-size" data-value={v || ' '}>
-      <input className="title-input" value={v} title={title} size={1} onChange={(e) => setV(e.target.value)} onBlur={save}
+    <span ref={box} className={'title-box' + (width ? ' editing' : '')}>
+      <input className="title-input" value={v} title={title} onChange={(e) => setV(e.target.value)} onFocus={open} onBlur={save}
+        style={width ? { width } : undefined}
         onKeyDown={(e) => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
           if (e.key === 'Escape') { e.preventDefault(); setV(title); requestAnimationFrame(() => (e.target as HTMLInputElement).blur()) }
         }} />
+      {/* invisible copy of the name: makes the box as wide as the name (up to its 20% cap) */}
+      <span className="title-sizer" aria-hidden>{v || title || ' '}</span>
+      {/* shown over the field while not editing: the field's own text can only be cut at the end */}
+      {!width && <FileName name={v || title} tail={8} className="title-show" />}
     </span>
   )
 }
@@ -397,9 +445,9 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
   }, [structure, q])
 
   if (page.status === 'error') return <div className="card err" style={{ maxWidth: 600 }}><b>{t('page_error')}</b><pre className="small" style={{ whiteSpace: 'pre-wrap' }}>{page.error}</pre></div>
-  if (mode === 'crop' && page.original_url) return <CropEditor page={page} onApply={(v) => edit('crop', v)} onCancel={onCancelEdit} />
-  if (mode === 'mesh' && page.flatten_source_url) return <MeshEditor page={page} onApply={(mesh) => edit('dewarp', { mesh })}
-    onReset={() => edit('dewarp', { mesh: null })} onCancel={onCancelEdit} />
+  if (mode === 'crop' && page.original_url) return <Suspense fallback={null}><CropEditor page={page} onApply={(v) => edit('crop', v)} onCancel={onCancelEdit} /></Suspense>
+  if (mode === 'mesh' && page.flatten_source_url) return <Suspense fallback={null}><MeshEditor page={page} onApply={(mesh) => edit('dewarp', { mesh })}
+    onReset={() => edit('dewarp', { mesh: null })} onCancel={onCancelEdit} /></Suspense>
   if (!page.render_key && !page.rendered && page.status !== 'ready') return <div className="muted stage-msg"><Loader2 size={16} className="spin" /> {t('not_ready')}</div>
   const tf = preview && !comparing ? `rotate(${(preview.rotate || 0) - (preview.deskew || 0)}deg)` : undefined
   // hold "Original" to see the unmodified page in place of the result
@@ -453,21 +501,29 @@ function PipelinePanel({ page, edit, post, setMode, mode, setPreview }: any) {
         {isImage && <button title={t('reset_auto')} disabled={busy} onClick={() => post(`/api/pages/${page.id}/reset`)}><RotateCcw size={15} /> {t('auto')}</button>}
         {!page.reviewed && <button title={t('mark_reviewed')} disabled={busy} onClick={() => post(`/api/pages/${page.id}/review`, { action: 'accept' })}><CheckCheck size={15} /> {t('accept')}</button>}
       </div>
-      {STAGES.map((s) => {
+      {TOOL_STAGES.map((s) => {
         const d = st[s] || {}
         const manual = rec?.[s]?.manual
+        // OCR carries the consistency check: its header shows the worse of the two
+        const cons = s === 'ocr' && st.consistency?.status === 'done' ? st.consistency : null
         return (
           <div className="stage" key={s}>
             <div className="stage-h" onClick={() => setOpen(open === s ? null : s)}>
               <span className="n">{t('stage_' + s)}</span>
               {manual && <span className="chip">{t('manual')}</span>}
-              {d.status === 'skipped' ? <span className="small muted">{t('skipped')}</span> : <TierBadge tier={d.tier || null} />}
+              <StageBadge skipped={d.status === 'skipped'} tier={worstTier(d.tier, cons?.tier)} />
             </div>
             {open === s && (
               <div className="stage-b">
+                <Why lines={[...stageWhy(t, s, d), ...(cons ? stageWhy(t, 'consistency', cons) : [])]} />
+                <Why skip lines={skipWhy(t, s, d, !!manual)} />
                 {d.method && <div className="small muted">{d.method}</div>}
                 {isImage && <StageEditor stage={s} page={page} rec={rec} d={d} edit={edit} setMode={setMode} mode={mode} setPreview={setPreview} />}
                 <Signals info={d.info} />
+                {cons && <>
+                  <div className="row small"><span className="muted">{t('stage_consistency')}</span><StageBadge tier={cons.tier} /></div>
+                  <Signals info={cons.info} />
+                </>}
                 {manual && <button className="link" style={{ alignSelf: 'flex-start' }} onClick={() => edit(s, null, true)}>{t('reset_auto')}</button>}
               </div>
             )}
@@ -481,7 +537,9 @@ function PipelinePanel({ page, edit, post, setMode, mode, setPreview }: any) {
             <span style={{ fontWeight: h.current ? 700 : 400 }}>v{h.version}</span>
             <span className="muted">{h.note}</span><span className="spacer" />
             <span className="muted">{fmtDate(h.created_at, true)}</span>
-            {!h.current && <button className="link" onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: h.version })} title={t('restore')}><History size={14} /></button>}
+            {/* the current version keeps an invisible restore button, so all timestamps line up */}
+            <button className="link" style={h.current ? { visibility: 'hidden' } : undefined} disabled={h.current} tabIndex={h.current ? -1 : undefined} aria-hidden={h.current || undefined}
+              onClick={() => post(`/api/pages/${page.id}/recipe/goto`, { version: h.version })} title={t('restore')}><History size={14} /></button>
           </div>
         ))}
       </div>
@@ -602,7 +660,110 @@ function CtxHere() {
   return <div className="ctx-here"><span className="icon-text"><ArrowUp size={11} />{t('ctx_before')}</span><span>{t('ctx_this_doc')}</span><span className="icon-text">{t('ctx_after')}<ArrowDown size={11} /></span></div>
 }
 
-function InfoPanel({ doc, q = '', focus = '' }: { doc: any; q?: string; focus?: string }) {
+/** Why a step got "check" / "needs review", in plain words (keys why_*; {n} filled in). Empty when it is OK or
+ *  was skipped. Mirrors how the backend pipeline (pipeline/runner.py, cv.py) assigns the tiers. */
+function stageWhy(t: (k: string) => string, s: string, d: any): string[] {
+  if (!d || d.status !== 'done' || !d.tier || d.tier === 'high') return []
+  const i = d.info || {}
+  const w = (k: string, n?: number | string) => t('why_' + k).replace('{n}', String(n ?? ''))
+  const pct = (x: any) => Math.round(Number(x) * 100)
+  switch (s) {
+    case 'quality':
+      return (i.flags || []).map((f: string) => w(f, Math.min(i.width || 0, i.height || 0)))
+    case 'acceptance':
+      if (d.method === 'heuristic_v2_ocr') {
+        if (d.tier === 'medium') return [w('accept_by_look', i.real_words)]
+        return [i.real_words <= 2 ? w('accept_unreadable') : w('accept_few_words', i.real_words)]
+      }
+      return [w('accept_unsure')]
+    case 'crop':
+      if (i.reason === 'no_text_in_first_choice') return [w('crop_retry')]
+      // a high score that still isn't "OK" means another outline came close
+      return [i.score >= 0.75 ? w('crop_ambiguous') : w('crop_unclear')]
+    case 'dewarp':
+      return [w('dewarp_curved')]
+    case 'orientation':
+      if (i.reopened) return [w('orient_reopened')]
+      if (d.method === 'tesseract_osd') return [i.agree === false ? w('orient_disagree') : w('orient_weak')]
+      if (d.method === 'ocr_4_rotations') {
+        if ((i.best_score ?? 1) < 0.05) return [w('orient_no_text')]
+        return [d.tier === 'medium' ? w('orient_guess') : w('orient_close')]
+      }
+      return []
+    case 'deskew':
+      return [i.reason === 'empty' ? w('deskew_empty') : w('deskew_weak')]
+    case 'ocr':
+      if (!i.n_words) return [w('ocr_none')]
+      return [d.tier === 'low' ? w('ocr_low', Math.round(i.mean_conf)) : w('ocr_medium', Math.round(i.mean_conf))]
+    case 'consistency':
+      return [i.reopened_orientation ? w('cons_reopened') : w('cons_garbled', pct(i.valid_ratio))]
+    default:
+      return []
+  }
+}
+
+/** Why a step was skipped (keys skip_*); `manual` = the step's recipe was set by hand. */
+function skipWhy(t: (k: string) => string, s: string, d: any, manual: boolean): string[] {
+  if (!d || d.status !== 'skipped') return []
+  const i = d.info || {}
+  if (i.reason === 'born_digital_page') return [t('skip_born_digital')]
+  if (s === 'layout' && i.reason === 'phase2') return [t('skip_layout_pdf')]
+  if (s === 'dewarp') {
+    const out = [t(manual ? 'skip_dewarp_manual' : 'skip_dewarp_auto')]
+    // the curvature is still measured when flattening is off
+    if (d.tier && d.tier !== 'high') out.push(t('skip_dewarp_curved'))
+    return out
+  }
+  return []
+}
+
+function Why({ lines, skip }: { lines: string[]; skip?: boolean }) {
+  if (!lines.length) return null
+  return <div className={'stage-why' + (skip ? ' skip' : '')}>{lines.map((l, n) => <div key={n} className="icon-text">
+    {skip && n === 0 ? <Info size={14} /> : <AlertTriangle size={14} />}<span>{l}</span></div>)}</div>
+}
+
+/** A pipeline step's result: "skipped" and "OK" are quiet (grey text / double check), only problems get a coloured badge. */
+function StageBadge({ tier, skipped }: { tier?: string | null; skipped?: boolean }) {
+  const { t } = useT()
+  if (skipped) return <span className="small muted">{t('skipped')}</span>
+  if (tier === 'high') return <span className="small muted icon-text" title={t('tier_high')}><CheckCheck size={14} /></span>
+  return <TierBadge tier={tier || null} />
+}
+
+/** The automatic, read-only pipeline steps of the current page (what they found, no controls). */
+function AutoStages({ page, pageNo }: { page: any; pageNo: number | null }) {
+  const { t } = useT()
+  const [open, setOpen] = useState<string | null>(null)
+  const st = page?.stages_detail || {}
+  if (!page) return null
+  return (
+    <div>
+      <label>{t('auto_steps')}{pageNo ? ` · ${t('page').toLowerCase()} ${pageNo}` : ''}</label>
+      {INFO_STAGES.map((s) => {
+        const d = st[s] || {}
+        return (
+          <div className="stage" key={s}>
+            <div className="stage-h" onClick={() => setOpen(open === s ? null : s)}>
+              <span className="n">{t('stage_' + s)}</span>
+              <StageBadge skipped={d.status === 'skipped'} tier={d.tier} />
+            </div>
+            {open === s && (
+              <div className="stage-b">
+                <Why lines={stageWhy(t, s, d)} />
+                <Why skip lines={skipWhy(t, s, d, false)} />
+                {d.method && <div className="small muted">{d.method}</div>}
+                <Signals info={d.info} />
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function InfoPanel({ doc, q = '', focus = '', page, pageNo = null }: { doc: any; q?: string; focus?: string; page?: any; pageNo?: number | null }) {
   const { t } = useT()
   const ev = doc.event
   // the field or message a search occurrence pointed to: marked and scrolled into view
@@ -656,6 +817,7 @@ function InfoPanel({ doc, q = '', focus = '' }: { doc: any; q?: string; focus?: 
         ))}
       </div>
       {doc.versions.length > 1 && <div><label>{t('versions')}</label>{doc.versions.map((v: any) => <div key={v.id} className="small">v{v.number} · {v.pages} {t('pages').toLowerCase()} · {v.note} {v.current && <Check size={12} />}</div>)}</div>}
+      <AutoStages page={page} pageNo={pageNo} />
     </div>
   )
 }

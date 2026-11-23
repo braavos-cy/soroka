@@ -420,6 +420,21 @@ def purge_document(doc_id: int, request: Request, p: Principal = Depends(admin),
     return {"ok": True}
 
 
+class PurgeIn(BaseModel):
+    ids: list[int]
+
+
+@router.post("/documents/purge")
+def purge_documents(body: PurgeIn, request: Request, p: Principal = Depends(admin), db: DB = Depends(get_db)):
+    """Permanent deletion of several documents in one request (the selection in Trash / Rejected)."""
+    docs = db.query(m.Document).filter(m.Document.id.in_(body.ids or [-1])).all()
+    for d in docs:
+        purge(db, d)
+        audit(db, p, "document_purged", d.id, client_ip(request))
+    db.commit()
+    return {"ok": True, "count": len(docs)}
+
+
 def purge(db: DB, d: m.Document) -> None:
     stop_processing(db, d)  # no job keeps working on pages that are about to disappear
     st = storage()

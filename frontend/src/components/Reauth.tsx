@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import QRCode from 'qrcode'
 import { api, setReauthHandler } from '../api'
 import { errText, useT } from '../i18n'
 import { TextInput } from './ui'
@@ -55,9 +54,10 @@ export function QR({ value, size = 220, level = 'M' }: { value: string; size?: n
   const [src, setSrc] = useState('')
   useEffect(() => {
     let live = true
-    QRCode.toString(value, { type: 'svg', margin: 4, errorCorrectionLevel: level })
-      .then((svg) => { if (live) setSrc('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)) })
-      .catch(() => { if (live) setSrc('') })
+    // the QR library is only needed while 2FA is being set up: loaded then
+    import('qrcode').then(({ default: QRCode }) => QRCode.toString(value, { type: 'svg', margin: 4, errorCorrectionLevel: level })
+      .then((svg: string) => { if (live) setSrc('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)) })
+      .catch(() => { if (live) setSrc('') })).catch(() => { if (live) setSrc('') })
     return () => { live = false }
   }, [value, level])
   return src ? <div className="qr" style={{ width: size }}><img src={src} alt="QR" /></div> : null

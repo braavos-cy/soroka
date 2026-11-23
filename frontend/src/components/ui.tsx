@@ -146,11 +146,19 @@ export function Select<V extends string | number | null>({ value, options, onCha
 }) {
   const key = (v: V) => (v === null ? '__null' : String(v))
   const cur = options.find((o) => o.value === value)
+  const pre = prefix && <span className="muted">{prefix}: </span>
+  // Every label sits in the same grid cell, only the current one visible: the button is always as wide as
+  // the longest choice, so picking a value never changes its size.
+  const sizers = options.filter((o) => o !== cur).map((o) => o.label)
+  if (cur && placeholder) sizers.push(placeholder)
   return (
     <Dropdown {...rest} selected={key(value)}
       items={options.map((o) => ({ key: key(o.value), label: o.label, icon: o.icon, indent: o.indent, muted: o.muted }))}
       onSelect={(k) => { const o = options.find((x) => key(x.value) === k); if (o) onChange(o.value) }}
-      button={<>{cur?.icon ?? icon}<span className="dd-val">{prefix && <span className="muted">{prefix}: </span>}{cur ? cur.label : <span className="muted">{placeholder}</span>}</span><ChevronDown size={14} className="dd-caret" /></>} />
+      button={<>{cur?.icon ?? icon}<span className="dd-val dd-fixed">
+        <span className="dd-cur">{pre}{cur ? cur.label : <span className="muted">{placeholder}</span>}</span>
+        {sizers.map((l, n) => <span key={n} className="dd-sizer" aria-hidden>{pre}{l}</span>)}
+      </span><ChevronDown size={14} className="dd-caret" /></>} />
   )
 }
 

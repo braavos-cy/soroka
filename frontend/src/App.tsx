@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, setUnauthHandler, User } from './api'
 import { Lang, LangCtx, makeT, useT } from './i18n'
@@ -7,9 +7,10 @@ import Login, { ChangePassword } from './pages/Login'
 import Sidebar, { DND, DND_DOCS } from './components/Sidebar'
 import DocumentsPage from './pages/Documents'
 import DocumentView from './pages/DocumentView'
-import ReviewPage from './pages/Review'
-import AdminPage from './pages/Admin'
-import AccountPage from './pages/Account'
+// opened now and then (and by admins only): loaded when first opened, not with the app
+const ReviewPage = lazy(() => import('./pages/Review'))
+const AdminPage = lazy(() => import('./pages/Admin'))
+const AccountPage = lazy(() => import('./pages/Account'))
 import { ReauthModal } from './components/Reauth'
 import { DialogProvider } from './components/ui'
 import { UploadsProvider } from './components/uploads'
@@ -280,6 +281,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         )}
         {drawer && <div className="drawer-bg" onClick={() => setDrawer(false)}><div className="drawer" onClick={(e) => e.stopPropagation()}><Sidebar /></div></div>}
         <div className="content">
+          <Suspense fallback={null}>
           <Routes>
             <Route path="/" element={<DocumentsPage view="active" />} />
             <Route path="/rejected" element={<DocumentsPage view="rejected" />} />
@@ -289,6 +291,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
             <Route path="/admin/*" element={<AdminPage />} />
             <Route path="/account" element={<AccountPage />} />
           </Routes>
+          </Suspense>
         </div>
       </div>
     </div>
