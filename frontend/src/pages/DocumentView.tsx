@@ -5,7 +5,7 @@ import { useT } from '../i18n'
 import { folderPath, useStore } from '../store'
 import { FileName, fmtBytes, fmtDate, PageThumb, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Menu, Select, useDialog } from '../components/ui'
-import { AlertTriangle, ArchiveRestore, ArrowDown, Info, ArrowLeft, ArrowUp, Check, CheckCheck, Crop, Download, FolderSearch, Grid3x3, History, Layers2, Loader2, MoreHorizontal, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
+import { AlertTriangle, ArchiveRestore, ArrowDown, Info, ArrowLeft, ArrowUp, Check, CheckCheck, Clock, Crop, Download, FolderSearch, Grid3x3, History, Layers2, Loader2, MoreHorizontal, Redo2, RefreshCw, RotateCcw, RotateCw, Trash2, Undo2 } from 'lucide-react'
 
 // the crop / mesh editors: loaded the first time one is opened
 const CropEditor = lazy(() => import('../components/PageEditors').then((m) => ({ default: m.CropEditor })))
@@ -448,7 +448,8 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
   if (mode === 'crop' && page.original_url) return <Suspense fallback={null}><CropEditor page={page} onApply={(v) => edit('crop', v)} onCancel={onCancelEdit} /></Suspense>
   if (mode === 'mesh' && page.flatten_source_url) return <Suspense fallback={null}><MeshEditor page={page} onApply={(mesh) => edit('dewarp', { mesh })}
     onReset={() => edit('dewarp', { mesh: null })} onCancel={onCancelEdit} /></Suspense>
-  if (!page.render_key && !page.rendered && page.status !== 'ready') return <div className="muted stage-msg"><Loader2 size={16} className="spin" /> {t('not_ready')}</div>
+  if (!page.render_key && !page.rendered && page.status !== 'ready') return <div className="muted stage-msg">
+    {page.status === 'queued' ? <><Clock size={16} /> {t('page_queued')}</> : <><Loader2 size={16} className="spin" /> {t('not_ready')}</>}</div>
   const tf = preview && !comparing ? `rotate(${(preview.rotate || 0) - (preview.deskew || 0)}deg)` : undefined
   // hold "Original" to see the unmodified page in place of the result
   const hold = (on: boolean) => (e: React.PointerEvent) => { e.preventDefault(); setComparing(on) }
@@ -464,7 +465,8 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
         </svg>
       )}
       {!comparing && structure?.words?.length > 0 && structure.width > 0 && <TextLayer structure={structure} />}
-      {['queued', 'processing'].includes(page.status) && <div className="canvas-busy"><Loader2 size={14} className="spin" /> {t(page.status)}</div>}
+      {page.status === 'processing' && <div className="canvas-busy"><Loader2 size={14} className="spin" /> {t('processing')}</div>}
+      {page.status === 'queued' && <div className="canvas-busy"><Clock size={14} /> {t('page_queued')}</div>}
       {['stopped', 'excluded'].includes(page.status) && <div className="canvas-busy">{t(page.status)}</div>}
     </div>
       {page.original_url && (

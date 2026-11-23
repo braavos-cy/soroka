@@ -65,6 +65,20 @@ def doc_summary(d: m.Document, first_page: int | None = None, thumb_v: str | Non
             "chat": ev.chat_name if ev else ""}
 
 
+def waiting_docs(db: DB, doc_ids: list[int]) -> set[int]:
+    """Documents marked 'processing' whose pages are all still waiting in the queue: shown as 'queued' (the
+    document becomes 'processing' when its pages are queued, long before a worker starts one of them). Not while
+    it is being split into pages (no pages yet) or finalized (no page waiting any more)."""
+    if not doc_ids:
+        return set()
+    rows = db.execute(text(
+        "SELECT d.id FROM document d JOIN document_version v ON v.id = d.current_version_id "
+        "CROSS JOIN LATERAL jsonb_array_elements(v.page_ids) e(pid) JOIN page pg ON pg.id = CAST(e.pid AS int) "
+        "WHERE d.id = ANY(:ids) AND d.status = 'processing' GROUP BY d.id "
+        "HAVING bool_or(pg.status = 'queued') AND NOT bool_or(pg.status = 'processing')"), {"ids": doc_ids}).all()
+    return {r[0] for r in rows}
+
+
 def first_pages(db: DB, docs: list[m.Document]) -> dict[int, tuple[int, str | None]]:
     """document id -> (first page id, its thumbnail version)."""
     vids = [d.current_version_id for d in docs if d.current_version_id]
@@ -176,6 +190,10 @@ def list_documents(
                 titled = True
         items.append({**doc_summary(d, *fp.get(d.id, (None, None)),
                                     snippet=" … ".join(h["text"] for h in hits[:2]) or None), "hits": hits})
+    waiting = waiting_docs(db, [it["id"] for it in items if it["status"] == "processing"])
+    for it in items:
+        if it["id"] in waiting:
+            it["status"] = "queued"
     return {"total": total, "terms": terms, "items": items}
 
 
@@ -261,6 +279,8 @@ def get_document(doc_id: int, p: Principal = Depends(ui_user), db: DB = Depends(
     versions = db.query(m.DocumentVersion).filter_by(document_id=d.id).order_by(m.DocumentVersion.number).all()
     rej = db.query(m.RejectedItem).filter_by(document_id=d.id).one_or_none()
     out = doc_summary(d, ids[0] if ids else None, thumb_version(pages.get(ids[0])) if ids else None)
+    if d.status == "processing" and waiting_docs(db, [d.id]):
+        out["status"] = "queued"
     out.update({
         "status_detail": d.status_detail, "has_pdf": bool(d.pdf_key),
         # last change of the document or of any of its pages (page edits do not always touch the document row)

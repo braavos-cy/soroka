@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { CalendarDays, FileText, Folder as FolderIcon, FolderInput, FolderX, Loader2, Plus, X } from 'lucide-react'
+import { CalendarDays, Clock, FileText, Folder as FolderIcon, FolderInput, FolderX, Loader2, Plus, X } from 'lucide-react'
 import { api, Tag } from '../api'
 import { useT } from '../i18n'
 import { folderTree, useStore } from '../store'
@@ -211,7 +211,8 @@ export function DateRange({ label, from, to, onFrom, onTo }: { label: string; fr
 const BUSY = ['queued', 'processing']
 
 /** A page thumbnail. `v` is the thumbnail's version (null = none rendered yet). While the page is (re)processed the
- *  last thumbnail stays visible with a spinner on top; with no thumbnail yet a placeholder says what is going on. */
+ *  last thumbnail stays visible with a spinner on top; with no thumbnail yet a placeholder says what is going on.
+ *  Only a page a worker is on spins: a queued one just waits, so it shows a still clock. */
 export function PageThumb({ pageId, v, status }: { pageId: number | null | undefined; v: string | null | undefined; status?: string }) {
   const { t } = useT()
   const want = pageId && v ? `/api/pages/${pageId}/image?variant=thumb&v=${v}` : null
@@ -231,16 +232,18 @@ export function PageThumb({ pageId, v, status }: { pageId: number | null | undef
     return () => { live = false }
   }, [want])
   const busy = !!status && BUSY.includes(status)
+  const waiting = status === 'queued'
   if (shown && !err) return (
     <>
       <img loading="lazy" src={shown} alt="" draggable={false} onError={() => setErr(true)} />
-      {busy && <span className="thumb-busy"><Loader2 size={18} className="spin" /></span>}
+      {busy && <span className="thumb-busy" title={t(waiting ? 'page_queued' : 'page_processing')}>
+        {waiting ? <Clock size={18} /> : <Loader2 size={18} className="spin" />}</span>}
     </>
   )
   return (
     <span className="thumb-ph">
-      {busy ? <Loader2 size={22} className="spin" /> : <FileText size={22} />}
-      <span className="small">{busy ? t('page_processing') : status === 'error' ? t('error') : ''}</span>
+      {waiting ? <Clock size={22} /> : busy ? <Loader2 size={22} className="spin" /> : <FileText size={22} />}
+      <span className="small">{waiting ? t('page_queued') : busy ? t('page_processing') : status === 'error' ? t('error') : ''}</span>
     </span>
   )
 }
