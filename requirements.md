@@ -81,7 +81,7 @@ Context and metadata are stored with the document and fully searchable.
 
 ### 3.5 Chat registration
 - Bots ignore chats that are not registered.
-- Registration from the admin UI: select a chat the bot is in (or use a one-time code sent in the chat — the bot must not reply; confirmation appears only in the UI).
+- Registration from the admin UI: select a chat the bot is in.
 - Per registered chat: default destination folder, default tags, context-window settings, mode (auto-capture all / override-only).
 
 ### 3.6 Direct upload and bulk import

@@ -140,18 +140,6 @@ class RegisteredChat(Base):
     __table_args__ = (UniqueConstraint("platform", "chat_id"),)
 
 
-class RegistrationCode(Base):
-    __tablename__ = "registration_code"
-    code: Mapped[str] = mapped_column(String(32), primary_key=True)
-    platform: Mapped[str] = mapped_column(String(20))
-    folder_id: Mapped[int | None] = mapped_column(Integer)
-    tag_ids: Mapped[list] = mapped_column(JSON, default=list)
-    mode: Mapped[str] = mapped_column(String(20), default="auto")
-    created_by: Mapped[int | None] = mapped_column(Integer)
-    expires_at: Mapped[datetime] = ts()
-    used_chat_id: Mapped[str | None] = mapped_column(String(200))
-
-
 # ---------------------------------------------------------------- ingestion
 class IngestEvent(Base):
     __tablename__ = "ingest_event"

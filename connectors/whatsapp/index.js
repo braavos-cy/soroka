@@ -22,7 +22,7 @@ const BUFFER_MAX = 60
 
 let sock = null
 let state = { status: 'starting', detail: '', qr: null }
-let config = { chats: new Map(), codes: new Set(), privateCode: '' }
+let config = { chats: new Map(), privateCode: '' }
 const textBuffer = new Map() // chatId -> [{id, sender, sender_name, time, text}]
 const pendingAfter = new Map() // chatId -> [{eventId, deadline, remaining}]
 
@@ -50,7 +50,7 @@ async function reportStatus() {
 async function refreshConfig() {
   try {
     const c = await core('GET', `/api/connector/config?platform=${PLATFORM}`)
-    config = { chats: new Map(c.chats.map(x => [x.chat_id, x])), codes: new Set(c.registration_codes), privateCode: c.private_code || '' }
+    config = { chats: new Map(c.chats.map(x => [x.chat_id, x])), privateCode: c.private_code || '' }
     if (c.command === 'logout') return relink('logout requested from admin UI')
     await processLeaves(c.leave_chats || [])
     processReactions(c.reactions || []) // not awaited: paced sending must not hold up config refreshes
@@ -251,16 +251,6 @@ async function onMessage(msg) {
   const mine = myJids()
   const ci = ctxInfoOf(inner) || {}
   const mentionsMe = (ci.mentionedJid || []).some(j => mine.has(jidNormalizedUser(j)))
-
-  // one-time registration code (bot never replies)
-  const code = (text.match(/SRK-[0-9A-F]{6}/i) || [])[0]?.toUpperCase()
-  if (code && config.codes.has(code) && isGroup) {
-    try {
-      await core('POST', '/api/connector/registration-code', { platform: PLATFORM, code, chat_id: chatId, chat_name: await chatNameOf(chatId) })
-      log.info({ chatId }, 'chat registered by code'); await refreshConfig()
-    } catch (e) { log.warn({ err: e.message }, 'code registration failed') }
-    return
-  }
 
   // a person's private chat counts only once activated with the secret word (set in the admin UI): otherwise
   // anybody could flood the archive. The word must be the whole message; the bot confirms with a reaction only.

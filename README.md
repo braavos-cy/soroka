@@ -93,7 +93,7 @@ Done:
 * Auth: Argon2id, mandatory TOTP + recovery codes, lockout + rate limit, sessions with revoke, re-auth for sensitive actions,
   scoped API tokens, audit log, roles, admin user management, CSRF protection, TLS (Caddy).
 * Ingestion: common ingest model with context window (before/after), dedup by hash, upload (files/folders/ZIP, per-file or
-  combined), watched import dir, WhatsApp connector (registration via UI or one-time code, auto/override modes, overrides,
+  combined), watched import dir, WhatsApp connector (registration via UI, auto/override modes, overrides,
   health + email alerts, QR re-link), optional ClamAV.
 * Pipeline (CPU, classic): normalize (EXIF, HEIC/AVIF/TIFF/GIF…), quality, acceptance (heuristic), boundary detection with
   candidates + fusion + tiers, perspective, orientation (Tesseract OSD + line direction, 4-rotation OCR fallback),

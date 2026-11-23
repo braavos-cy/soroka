@@ -136,9 +136,6 @@ def connector_status(body: StatusIn, p: Principal = Depends(connector), db: DB =
 @router.get("/connector/config")
 def connector_config(platform: str, p: Principal = Depends(connector), db: DB = Depends(get_db)):
     chats = db.query(m.RegisteredChat).filter_by(platform=platform, active=True).all()
-    codes = db.query(m.RegistrationCode).filter(m.RegistrationCode.platform == platform,
-                                                m.RegistrationCode.expires_at > now(),
-                                                m.RegistrationCode.used_chat_id.is_(None)).all()
     leave = db.query(m.SeenChat).filter(m.SeenChat.platform == platform, m.SeenChat.leave_pending()).all()
     cmd = None
     acc = db.query(m.ConnectorAccount).filter_by(platform=platform).one_or_none()
@@ -147,7 +144,6 @@ def connector_config(platform: str, p: Principal = Depends(connector), db: DB = 
         db.commit()
     return {"command": cmd, "chats": [{"chat_id": c.chat_id, "mode": c.mode, "ctx_before": c.ctx_before, "ctx_after": c.ctx_after,
                        "ctx_minutes": c.ctx_minutes} for c in chats],
-            "registration_codes": [c.code for c in codes],
             # secret word that activates a person's private chat ("" = private chats cannot be activated)
             "private_code": appsettings.private_code(db, platform),
             "leave_chats": [s.chat_id for s in leave],
@@ -214,13 +210,6 @@ def seen_chats(body: SeenIn, p: Principal = Depends(connector), db: DB = Depends
     return {"ok": True}
 
 
-class CodeSeenIn(BaseModel):
-    platform: str
-    code: str
-    chat_id: str
-    chat_name: str = ""
-
-
 class PrivateActivateIn(BaseModel):
     platform: str
     code: str
@@ -245,21 +234,3 @@ def private_activate(body: PrivateActivateIn, p: Principal = Depends(connector),
     db.commit()
     return {"ok": True}
 
-
-@router.post("/connector/registration-code")
-def registration_code_seen(body: CodeSeenIn, p: Principal = Depends(connector), db: DB = Depends(get_db)):
-    """The bot saw a one-time code in a chat. It never replies; confirmation shows in the admin UI."""
-    rc = db.get(m.RegistrationCode, body.code.strip().upper())
-    if rc is None or rc.platform != body.platform or rc.expires_at < now() or rc.used_chat_id:
-        raise HTTPException(404)
-    rc.used_chat_id = body.chat_id
-    reg = db.query(m.RegisteredChat).filter_by(platform=body.platform, chat_id=body.chat_id).one_or_none()
-    if reg is None:
-        reg = m.RegisteredChat(platform=body.platform, chat_id=body.chat_id)
-        db.add(reg)
-    reg.chat_name, reg.folder_id, reg.tag_ids, reg.mode, reg.active = (
-        body.chat_name[:300], rc.folder_id, rc.tag_ids, rc.mode, True)
-    db.add(m.AuditLog(user_id=rc.created_by, action="chat_registered_by_code", target=body.chat_id,
-                      details={"platform": body.platform, "chat_name": body.chat_name}))
-    db.commit()
-    return {"ok": True}

@@ -1,7 +1,6 @@
 """Admin: users, settings, audit log, connectors, chat registration, system status, export."""
 import io
 import json
-import secrets
 import shutil
 import zipfile
 from datetime import timedelta
@@ -307,31 +306,6 @@ def unregister_chat(cid: int, request: Request, p: Principal = Depends(admin), d
     db.commit()
     return {"ok": True}
 
-
-class CodeIn(BaseModel):
-    platform: str
-    folder_id: int | None = None
-    tag_ids: list[int] = []
-    mode: str = "auto"
-
-
-@router.post("/registration-codes")
-def new_code(body: CodeIn, request: Request, p: Principal = Depends(admin), db: DB = Depends(get_db)):
-    """One-time code: post it in a chat with the bot; the chat gets registered (bot stays silent)."""
-    code = "SRK-" + secrets.token_hex(3).upper()
-    db.add(m.RegistrationCode(code=code, platform=body.platform, folder_id=body.folder_id, tag_ids=body.tag_ids,
-                              mode=body.mode, created_by=p.user_id, expires_at=now() + timedelta(minutes=30)))
-    audit(db, p, "registration_code_created", code, client_ip(request), platform=body.platform)
-    db.commit()
-    return {"code": code, "expires_in_minutes": 30}
-
-
-@router.get("/registration-codes/{code}")
-def code_status(code: str, p: Principal = Depends(admin), db: DB = Depends(get_db)):
-    rc = db.get(m.RegistrationCode, code)
-    if rc is None:
-        raise HTTPException(404)
-    return {"used_chat_id": rc.used_chat_id, "expired": rc.expires_at < now()}
 
 
 # ---------------------------------------------------------------- system

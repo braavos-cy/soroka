@@ -7,7 +7,7 @@ import { useStore } from '../store'
 import { Modal, QR } from '../components/Reauth'
 import { FolderSelect, fmtBytes, fmtDate, TagAdder, TagChips } from '../components/Pickers'
 import { Select, TextInput, useDialog } from '../components/ui'
-import { CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, MessageCircle, KeyRound, LockOpen, Pencil, Plug, ScrollText, Send, Server, ShieldOff, SlidersHorizontal, Trash2, UserCheck, UserX, Users as UsersIcon } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Info, Loader2, MessageCircle, KeyRound, LockOpen, Pencil, Plug, ScrollText, Send, Server, ShieldOff, SlidersHorizontal, Trash2, UserCheck, UserX, Users as UsersIcon } from 'lucide-react'
 
 export default function AdminPage() {
   const { t } = useT()
@@ -39,20 +39,12 @@ function Connectors() {
   const [conns, setConns] = useState<any[]>([])
   const [chats, setChats] = useState<any>({ registered: [], unregistered: [] })
   const [editing, setEditing] = useState<any>(null)
-  const [code, setCode] = useState<any>(null)
+  const [showUnreg, setShowUnreg] = useState<Record<string, boolean>>({})  // per platform; collapsed by default
   const load = useCallback(() => {
     api('/api/admin/connectors').then(setConns)
     api('/api/admin/chats').then(setChats)
   }, [])
   useEffect(() => { load(); const i = setInterval(load, 5000); return () => clearInterval(i) }, [load])
-  useEffect(() => {
-    if (!code || code.used) return
-    const i = setInterval(async () => {
-      const s = await api(`/api/admin/registration-codes/${code.code}`)
-      if (s.used_chat_id) { setCode({ ...code, used: s.used_chat_id }); load() }
-    }, 3000)
-    return () => clearInterval(i)
-  }, [code])
   const relink = async (p: string) => { if (await dlg.confirm({ title: t('relink') + '?', message: t('relink_confirm'), ok: t('relink'), danger: true })) { await api(`/api/admin/connectors/${p}/logout`, { method: 'POST' }); load() } }
   const unregister = async (c: any) => { if (await dlg.confirm({ title: `${t('unregister')} «${c.chat_name || c.chat_id}»?`, ok: t('unregister'), danger: true })) { await api(`/api/admin/chats/${c.id}`, { method: 'DELETE' }); load() } }
   const leave = async (c: any) => {
@@ -107,18 +99,6 @@ function Connectors() {
                 </div>
                 {c.qr && <div className="col"><div className="small">{t('scan_qr')}</div><QR value={c.qr} size={280} level="L" /></div>}
 
-                {c.platform === 'whatsapp' && (
-                  <div className="conn-code">
-                    {code ? (
-                      <>
-                        <span className="code">{code.code}</span>
-                        <span className="small icon-text">{code.used ? <><CheckCircle2 size={14} className="ok-text" /> {code.used}</> : <><Loader2 size={14} className="spin" /> {t('waiting')}</>}</span>
-                        <button onClick={() => setCode(null)}>{t('close')}</button>
-                      </>
-                    ) : <button onClick={async () => setCode(await api('/api/admin/registration-codes', { body: { platform: c.platform } }))}>{t('new_code')}</button>}
-                    <span className="small muted">{t('registration_code_help')}</span>
-                  </div>
-                )}
                 {c.platform === 'whatsapp' && <PrivateCode platform={c.platform} value={c.private_code || ''} onSaved={load} />}
 
                 <h4>{t('registered_chats')}</h4>
@@ -145,8 +125,13 @@ function Connectors() {
 
                 {unreg.length > 0 && (
                   <>
-                    <h4>{t('unregistered_chats')}</h4>
-                    <div className="table-scroll">
+                    <button className="sub-toggle" aria-expanded={!!showUnreg[c.platform]}
+                      onClick={() => setShowUnreg((s) => ({ ...s, [c.platform]: !s[c.platform] }))}>
+                      {showUnreg[c.platform] ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                      <h4>{t('unregistered_chats')}</h4>
+                      <span className="small muted">{unreg.length}</span>
+                    </button>
+                    {showUnreg[c.platform] && <div className="table-scroll">
                       <table className="list"><tbody>
                         {unreg.map((u: any) => (
                           <tr key={u.chat_id}>
@@ -156,7 +141,7 @@ function Connectors() {
                           </tr>
                         ))}
                       </tbody></table>
-                    </div>
+                    </div>}
                   </>
                 )}
               </div>
@@ -183,14 +168,16 @@ function PrivateCode({ platform, value, onSaved }: { platform: string; value: st
   }
   return (
     <div className="col" style={{ gap: 4 }}>
-      <h4 style={{ margin: 0 }}>{t('private_code')}</h4>
+      <h4 style={{ margin: 0 }} className="icon-text" title={t('private_code_help')}>
+        {t('private_code')} <Info size={14} className="muted" />
+      </h4>
       <div className="row">
         <TextInput type={show ? 'text' : 'password'} value={v} autoComplete="off" placeholder={t('private_code_none')} maxLength={100}
           onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && dirty) save() }} wrapStyle={{ width: 240, maxWidth: '100%' }} />
         <button className="icon" title={show ? t('hide') : t('show')} onClick={() => setShow(!show)}>{show ? <EyeOff size={15} /> : <Eye size={15} />}</button>
         <button className="primary" disabled={!dirty} onClick={save}>{t('save')}</button>
       </div>
-      <span className="small muted">{value ? t('private_code_help') : t('private_code_off')}</span>
+      {!value && <span className="small muted">{t('private_code_off')}</span>}
     </div>
   )
 }
