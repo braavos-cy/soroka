@@ -34,6 +34,11 @@ _SORT_FIELDS = {"received": m.Document.received_at, "date": m.Document.updated_a
 SORTS = {f"{k}_{d}": getattr(col, d)() for k, col in _SORT_FIELDS.items() for d in ("asc", "desc")}
 SORTS["title"] = SORTS["title_asc"]  # older links
 
+# file type of an original file: its extension in lower case (jpeg = jpg, tif = tiff), or "" when it has none
+_ext_raw = func.lower(func.coalesce(func.substring(m.FileOriginal.filename, r"\.([A-Za-z0-9]{1,10})$"), ""))
+_file_ext = case((_ext_raw == "jpeg", "jpg"), (_ext_raw == "tif", "tiff"), else_=_ext_raw)
+_doc_has_file = m.Document.source_file_ids.op("@>")(func.jsonb_build_array(m.FileOriginal.id))
+
 
 def _ids(s: str | None) -> list[int]:
     return [int(x) for x in (s or "").split(",") if x.strip().isdigit()]
@@ -103,8 +108,9 @@ def list_documents(
                                               m.DocumentTag.tag_id.in_(not_ids))))
     if source:
         qry = qry.filter(m.Document.source_platform.in_(source.split(",")))
-    if file_type:
-        qry = qry.filter(m.Document.file_type.in_(file_type.split(",")))
+    if file_type:  # extensions of the original files (any of them, for documents made of several files)
+        exts = [{"jpeg": "jpg", "tif": "tiff"}.get(x, x) for x in file_type.lower().replace(".", "").split(",")]
+        qry = qry.filter(exists().where(and_(_doc_has_file, _file_ext.in_(exts))))
     if language:
         qry = qry.filter(m.Document.language.in_(language.split(",")))
     if status:
@@ -222,6 +228,11 @@ def suggest(field: str, q: str = "", limit: int = Query(20, le=100), p: Principa
             if extra:
                 e["label"] = f"{e['value']} · {', '.join(extra[:2])}"
         return out
+    if field == "file_type":  # every file type there is, most used first (not filtered by the typed text)
+        rows = (db.query(_file_ext, n).join(m.Document, _doc_has_file)
+                .filter(m.Document.trashed_at.is_(None), m.Document.status != "rejected", _file_ext != "")
+                .group_by(_file_ext).order_by(n.desc(), _file_ext).limit(limit).all())
+        return [{"value": e, "label": e.upper(), "count": c} for e, c in rows]
     raise HTTPException(400, "bad_field")
 
 

@@ -150,6 +150,16 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const uploads = useUploads()
   const [upload, setUpload] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
+  // the File type filter offers every file type there is among the documents (fetched when the filters open)
+  const [fileTypes, setFileTypes] = useState<{ value: string; label: string; count: number }[]>([])
+  // and again whenever documents change (trashed, deleted, arrived), so the counts stay true while the panel is open
+  useEffect(() => {
+    if (!showFilters) return
+    const get = () => api<typeof fileTypes>('/api/documents/suggest?field=file_type&limit=100').then(setFileTypes).catch(() => {})
+    get()
+    window.addEventListener('soroka:reload', get)
+    return () => window.removeEventListener('soroka:reload', get)
+  }, [showFilters, total])
   const [layout, setLayout] = useState<'grid' | 'list'>(() => { try { return (localStorage.getItem('layout') as any) || 'grid' } catch { return 'grid' } })
 
   // the list's query, without paging
@@ -463,7 +473,9 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           <Select prefix={t('source')} value={params.get('source') || ''} onChange={(v) => setParam('source', v)}
             options={[{ value: '', label: t('any') }, ...['upload', 'whatsapp', 'telegram', 'email', 'import'].map((x) => ({ value: x, label: t('source_' + x) }))]} />
           <Select prefix={t('file_type')} value={params.get('file_type') || ''} onChange={(v) => setParam('file_type', v)}
-            options={[{ value: '', label: t('any') }, ...['image', 'pdf', 'office', 'mixed'].map((x) => ({ value: x, label: t('ft_' + x) }))]} />
+            options={[{ value: '', label: t('any') }, ...fileTypes.map((x) => ({ value: x.value, label: `${x.label} (${x.count})` })),
+              // a type picked earlier (link) that no document has any more stays shown
+              ...(params.get('file_type') && !fileTypes.some((x) => x.value === params.get('file_type')) ? [{ value: params.get('file_type')!, label: params.get('file_type')!.toUpperCase() }] : [])]} />
           <Select prefix={t('review_status')} value={params.get('review') || ''} onChange={(v) => setParam('review', v)}
             options={[{ value: '', label: t('any') }, { value: 'needs_review', label: t('needs_review') }, { value: 'check', label: t('check') }, { value: 'ok', label: t('ok') }]} />
           <Select prefix={t('languages')} value={params.get('language') || ''} onChange={(v) => setParam('language', v)}
