@@ -9,6 +9,8 @@ x-backend-dev: &backend-dev
   environment:
     COOKIE_SECURE: "false"   # dev is served over plain http
     API_DOCS: "true"
+    # DEV_NO_PASSWORD=true in .env: no login on the dev server, you are the admin. Production never reads it.
+    SOROKA_DEV_NO_PASSWORD: ${DEV_NO_PASSWORD:-false}
 
 services:
   api:

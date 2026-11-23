@@ -196,13 +196,16 @@ def logout(request: Request, response: Response, db: DB = Depends(get_db)):
 
 @router.get("/me")
 def me(request: Request, db: DB = Depends(get_db)):
-    from ..deps import _session_from_cookie
+    from ..deps import _DEV_SESSION_ID, _session_from_cookie
     s = _session_from_cookie(request, db)
     if s is None:
         raise HTTPException(401, "not_authenticated")
     if not mfa_satisfied(db, s):
         return {"user": None, "next": "totp" if s.user.totp_enabled else "totp_setup", "email": s.user.email}
-    return {"user": user_out(s.user), "next": "done"}
+    out = user_out(s.user)
+    if s.id == _DEV_SESSION_ID:
+        out["must_change_password"] = False  # dev server without password: no forced change either
+    return {"user": out, "next": "done"}
 
 
 class PasswordIn(BaseModel):

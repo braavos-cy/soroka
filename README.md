@@ -17,6 +17,8 @@ Restart `./dev.sh` only after changing `requirements.txt`, `package.json` or a D
 * First run creates `.env` with random secrets and prints the admin password.
 * Dev is a separate compose project (`soroka-dev`): its own database and files, production volumes are untouched.
 * Plain HTTP (cookies not `Secure`) — dev only, don't put real documents in it.
+* `DEV_NO_PASSWORD=true` in `.env`: no login on the dev server, every browser is the admin (no 2FA/password prompts).
+  Production ignores it: only the dev override passes it to the backend, and the backend refuses it with `Secure` cookies.
 * The port must be open in the cloud firewall (Oracle Cloud: VCN → Security List → ingress TCP 5173).
 * Wipe dev data: `docker compose -p soroka-dev down -v`.
 

@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     bootstrap_admin_password: str = ""
     cookie_secure: bool = True
     api_docs: bool = False  # serve /api/docs + /api/openapi.json
+    # Dev server only: every browser is signed in as the admin — no login, 2FA or password prompts.
+    # docker-compose.dev.yml sets it from DEV_NO_PASSWORD in .env (a different name, so .env alone never turns it
+    # on in production), and it is ignored unless COOKIE_SECURE=false, which only the plain-http dev server uses.
+    soroka_dev_no_password: bool = False
     session_hours: int = 24 * 7
     reauth_minutes: int = 10
     clamav_host: str = ""  # e.g. "clamav" -> scan uploads via clamd INSTREAM

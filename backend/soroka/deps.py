@@ -1,7 +1,9 @@
 """Request authentication: session cookie (UI), bearer API token (extension), connector token (bots)."""
 import hmac
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import lru_cache
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session as DB
@@ -13,6 +15,7 @@ from .db import get_db, now
 from .security import sha256
 
 COOKIE = "soroka_session"
+log = logging.getLogger("soroka.auth")
 
 
 @dataclass
@@ -36,13 +39,46 @@ def audit(db: DB, principal: "Principal | None", action: str, target: str = "", 
                       details=details, ip=ip))
 
 
+@lru_cache
+def dev_no_password() -> bool:
+    """Dev server without login (see config.soroka_dev_no_password). Never with Secure cookies, i.e. never in production."""
+    cfg = settings()
+    if cfg.soroka_dev_no_password and cfg.cookie_secure:
+        log.error("SOROKA_DEV_NO_PASSWORD ignored: only allowed on the dev server (COOKIE_SECURE=false)")
+        return False
+    return cfg.soroka_dev_no_password
+
+
+_DEV_SESSION_ID = sha256("soroka-dev-no-password")
+
+
+def _dev_session(db: DB) -> m.Session | None:
+    """The one shared session every dev browser uses: the admin, 2FA done, always freshly re-authenticated."""
+    s = db.get(m.Session, _DEV_SESSION_ID)
+    if s is None or not s.user.is_active or s.user.role != "admin":
+        admins = db.query(m.User).filter_by(role="admin", is_active=True).order_by(m.User.id)
+        u = admins.filter_by(email=settings().bootstrap_admin_email.lower()).first() or admins.first()
+        if u is None:
+            return None
+        if s is None:
+            s = m.Session(id=_DEV_SESSION_ID, user_agent="dev server, no password")
+            db.add(s)
+        s.user = u
+        log.warning("dev server without password: every request is signed in as %s", u.email)
+    if s.reauth_at is None or now() - s.reauth_at > timedelta(minutes=1):
+        s.mfa_ok, s.reauth_at, s.last_seen_at = True, now(), now()
+        s.expires_at = now() + timedelta(days=365)
+        db.commit()
+    return s
+
+
 def _session_from_cookie(request: Request, db: DB) -> m.Session | None:
     tok = request.cookies.get(COOKIE)
     if not tok:
-        return None
+        return _dev_session(db) if dev_no_password() else None
     s = db.get(m.Session, sha256(tok))
     if s is None or s.expires_at < now() or not s.user.is_active:
-        return None
+        return _dev_session(db) if dev_no_password() else None
     if (now() - s.last_seen_at) > timedelta(minutes=1):
         s.last_seen_at = now()
         db.commit()
@@ -84,7 +120,7 @@ def current(request: Request, db: DB = Depends(get_db)) -> Principal:
         raise HTTPException(401, "not_authenticated")
     if not mfa_satisfied(db, s):
         raise HTTPException(401, "mfa_required")
-    if s.user.must_change_password and request.url.path not in ("/api/auth/password", "/api/auth/me"):
+    if s.user.must_change_password and s.id != _DEV_SESSION_ID and request.url.path not in ("/api/auth/password", "/api/auth/me"):
         raise HTTPException(403, "must_change_password")
     _check_csrf(request)
     return Principal(user=s.user, session=s)
