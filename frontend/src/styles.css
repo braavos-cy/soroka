@@ -310,9 +310,19 @@ button.danger-fill { background: var(--bad); border-color: var(--bad); color: #f
 .cell-icon { display: inline-block; vertical-align: middle; }
 .actions-cell { width: 1%; white-space: nowrap; }
 .row-actions { display: flex; gap: 2px; justify-content: flex-end; }
-.review-grid { display: grid; grid-template-columns: minmax(280px, 1fr) 2fr; gap: 16px; padding: 16px 20px; align-items: start; }
-.review-grid > .card { position: sticky; top: 64px; }
-@media (max-width: 900px) { .review-grid { grid-template-columns: 1fr; } .review-grid > .card { position: static; } }
+/* the queue and the page under review scroll separately, each within the screen */
+.review-page { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.review-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(280px, 1fr) 2fr; gap: 16px; padding: 16px 20px; align-items: stretch; }
+.review-list { min-height: 0; overflow: auto; padding: 2px; margin: -2px; }
+.review-grid > .card { min-height: 0; overflow: auto; align-self: start; max-height: 100%; }
+.crop-pick { gap: 4px; cursor: pointer; padding: 4px; border-radius: 6px; outline: 2px solid transparent; }
+.crop-pick:hover { background: var(--panel2); }
+.crop-pick.sel { outline-color: var(--accent); background: var(--accent-weak); }
+@media (max-width: 900px) {
+  .review-page { height: auto; display: block; }
+  .review-grid { grid-template-columns: 1fr; }
+  .review-list, .review-grid > .card { overflow: visible; max-height: none; }
+}
 .file-name { display: block; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; }
 .file-name.strong { font-weight: 600; }
 .list td.title-cell { max-width: 0; width: 40%; }

@@ -4,7 +4,7 @@ import { api } from '../api'
 import { plural, useT } from '../i18n'
 import { useStore } from '../store'
 import { FileName, fmtDate, TierBadge } from '../components/Pickers'
-import { Check, ChevronLeft, ChevronRight, FileX, PenSquare } from 'lucide-react'
+import { Check, FileX, PenSquare } from 'lucide-react'
 import { cropLabel, cropOptions } from '../components/cropOptions'
 
 type Item = { page_id: number; document_id: number; title: string; tier: string; page_no: number; received_at: string; flagged: { stage: string; tier: string; method: string }[] }
@@ -17,30 +17,29 @@ export default function ReviewPage() {
   const [idx, setIdx] = useState(0)
   const [medium, setMedium] = useState(false)
   const [detail, setDetail] = useState<any>(null)
+  // the crop option clicked: only highlighted; Accept applies it
+  const [picked, setPicked] = useState<string | null>(null)
   const load = useCallback(() => api<Item[]>(`/api/review?include_medium=${medium}`).then((r) => { setItems(r); setIdx((i) => Math.min(i, Math.max(0, r.length - 1))) }), [medium])
   useEffect(() => { load() }, [load])
   useEffect(() => { window.addEventListener('soroka:reload', load); return () => window.removeEventListener('soroka:reload', load) }, [load])
   const cur = items[idx]
-  useEffect(() => { setDetail(null); if (cur) api(`/api/pages/${cur.page_id}`).then(setDetail) }, [cur?.page_id])
+  useEffect(() => { setDetail(null); setPicked(null); if (cur) api(`/api/pages/${cur.page_id}`).then(setDetail) }, [cur?.page_id])
 
+  const opts = detail ? cropOptions(detail.stages_detail, detail.width, detail.height) : []
   const act = useCallback(async (kind: 'accept' | 'non_document' | 'open') => {
     if (!cur) return
-    if (kind === 'open') return nav(`/doc/${cur.document_id}`)
+    if (kind === 'open') return nav(`/doc/${cur.document_id}?page=${cur.page_no || 1}`)  // the page under review
     try {
-      if (kind === 'accept') await api(`/api/pages/${cur.page_id}/review`, { body: { action: 'accept' } })
+      const crop = picked ? opts.find((o) => o.key === picked) : undefined
+      if (kind === 'accept' && crop) await api(`/api/pages/${cur.page_id}/edit`, { body: { stage: 'crop', value: { quad: crop.quad } } })
+      else if (kind === 'accept') await api(`/api/pages/${cur.page_id}/review`, { body: { action: 'accept' } })
       if (kind === 'non_document') await api(`/api/pages/${cur.page_id}/edit`, { body: { stage: 'acceptance', value: { value: 'non_document' } } })
       setItems((xs) => xs.filter((x) => x.page_id !== cur.page_id))
       reload()
     } catch (e: any) { toast(e.detail) }
-  }, [cur])
-  const pickCrop = async (quad: any) => {
-    await api(`/api/pages/${cur.page_id}/edit`, { body: { stage: 'crop', value: { quad } } })
-    setItems((xs) => xs.filter((x) => x.page_id !== cur.page_id)); reload()
-  }
-
-  const opts = detail ? cropOptions(detail.stages_detail, detail.width, detail.height) : []
+  }, [cur, picked, detail])
   return (
-    <div>
+    <div className="review-page">
       <div className="toolbar">
         <h2 style={{ margin: 0 }}>{t('review_queue')}</h2>
         <span className="muted">{plural(t, lang, items.length, 'pl_pages')}</span>
@@ -64,9 +63,6 @@ export default function ReviewPage() {
         {cur && detail && (
           <div className="card col review-card">
             <div className="row review-nav">
-              <button className="icon" title={t('prev')} disabled={idx <= 0} onClick={() => setIdx(idx - 1)}><ChevronLeft size={18} /></button>
-              <span className="small muted">{idx + 1} / {items.length}</span>
-              <button className="icon" title={t('next')} disabled={idx >= items.length - 1} onClick={() => setIdx(idx + 1)}><ChevronRight size={18} /></button>
               <FileName name={cur.title} className="strong" />
             </div>
             <div className="row review-actions">
@@ -79,7 +75,7 @@ export default function ReviewPage() {
                 <div className="small muted">{t('candidates')} — {t('stage_crop')}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(3, opts.length)}, 1fr)`, gap: 8 }}>
                   {opts.slice(0, 3).map((c) => (
-                    <div key={c.key} className="col" style={{ gap: 4, cursor: 'pointer' }} onClick={() => pickCrop(c.quad)}>
+                    <div key={c.key} className={'col crop-pick' + (picked === c.key ? ' sel' : '')} onClick={() => setPicked(picked === c.key ? null : c.key)}>
                       <div className="imgwrap"><img src={detail.original_url} alt="" style={{ maxHeight: 360 }} />
                         <svg viewBox={`0 0 ${detail.width} ${detail.height}`} preserveAspectRatio="none">
                           <polygon points={c.quad.map((p: number[]) => p.join(',')).join(' ')} fill="rgba(47,111,237,.15)" stroke="#2f6fed" strokeWidth={detail.width / 150} />
