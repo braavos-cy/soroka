@@ -477,8 +477,8 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
               // a type picked earlier (link) that no document has any more stays shown
               ...(params.get('file_type') && !fileTypes.some((x) => x.value === params.get('file_type')) ? [{ value: params.get('file_type')!, label: params.get('file_type')!.toUpperCase() }] : [])]} /></Field>
           <Field label={t('review_status')}><Select value={params.get('review') || ''} onChange={(v) => setParam('review', v)}
-            options={[{ value: '', label: t('any') }, { value: 'needs_review', label: t('needs_review') }, { value: 'check', label: t('check') }, { value: 'ok', label: t('ok') }]} /></Field>
-          <Field label={t('languages')}><Select value={params.get('language') || ''} onChange={(v) => setParam('language', v)}
+            options={[{ value: '', label: t('any') }, { value: 'needs_review', label: t('needs_review') }, { value: 'check', label: t('check_short') }, { value: 'ok', label: t('ok') }]} /></Field>
+          <Field label={t('language')}><Select value={params.get('language') || ''} onChange={(v) => setParam('language', v)}
             options={[{ value: '', label: t('any') }, { value: 'ru', label: 'RU' }, { value: 'en', label: 'EN' }, { value: 'mixed', label: 'RU + EN' }]} /></Field>
           {/* only meaningful while files are being uploaded from this browser */}
           {(uploads.tasks.length > 0 || upFilter) && <Field label={t('up_filter')}><Select value={upFilter} onChange={(v) => setParam('upload', v)}
