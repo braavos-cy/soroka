@@ -537,19 +537,47 @@ def _estimate_orientation(img: np.ndarray) -> tuple[int, str, dict]:
     img = _normalized(img)
     o = O.osd(img)
     ld = C.line_direction(img)
+    langs = _osd_langs(o)
     if o and o["orientation_conf"] >= 1.5:
         horiz_expected = o["rotate"] in (0, 180)
         agree = horiz_expected == ld["horizontal"]
         tier = "high" if o["orientation_conf"] >= 4 and agree else "medium"
+        info = {"method": "tesseract_osd", **o, "line_direction": ld, "agree": agree}
+        if agree and o["orientation_conf"] < 4:
+            # OSD is unsure (short texts give it little to go on) but the lines agree on the axis: reading the page
+            # the chosen way and upside down settles it (on a page with short text: 0.99 against 0.20)
+            angle, tier, confirm = _confirm_upright(img, o["rotate"], langs)
+            return angle, tier, {**info, "confirm": confirm}
         if o["orientation_conf"] >= 4 or agree:
-            return o["rotate"], tier, {"method": "tesseract_osd", **o, "line_direction": ld, "agree": agree}
-    langs = "rus+eng"
-    if o and o.get("script") == "Latin" and o.get("script_conf", 0) > 1:
-        langs = "eng"
-    elif o and o.get("script") == "Cyrillic" and o.get("script_conf", 0) > 1:
-        langs = "rus"
+            return o["rotate"], tier, info
     angle, tier, info = _orientation_fallback(img, langs, ld)
     return angle, tier, {"method": "ocr_4_rotations", "osd": o, "line_direction": ld, **info}
+
+
+CONFIRM_SCORE = 0.5  # reads well enough to count as text the right way up
+CONFIRM_MARGIN = 0.3  # and this much better than the page upside down
+
+
+def _osd_langs(o: dict | None) -> str:
+    """OCR languages for orientation checks, from the script OSD saw."""
+    if o and o.get("script") == "Latin" and o.get("script_conf", 0) > 1:
+        return "eng"
+    if o and o.get("script") == "Cyrillic" and o.get("script_conf", 0) > 1:
+        return "rus"
+    return "rus+eng"
+
+
+def _confirm_upright(img: np.ndarray, angle: int, langs: str) -> tuple[int, str, dict]:
+    """The page read turned by `angle` and by `angle` + 180: the clearly better reading decides (high), otherwise
+    OSD's choice stays, flagged for a look (medium)."""
+    flip = (angle + 180) % 360
+    s, f = (O.quick_ocr_score(C.rotate90(img, a), langs)["score"] for a in (angle, flip))
+    info = {"angle": angle, "score": s, "upside_down_score": f}
+    if s >= CONFIRM_SCORE and s - f >= CONFIRM_MARGIN:
+        return angle, "high", info
+    if f >= CONFIRM_SCORE and f - s >= CONFIRM_MARGIN:  # OSD had it upside down
+        return flip, "high", {**info, "flipped": True}
+    return angle, "medium", info
 
 
 def _orientation_fallback(img: np.ndarray, langs: str, ld: dict | None = None) -> tuple[int, str, dict]:
@@ -571,7 +599,8 @@ def _orientation_fallback(img: np.ndarray, langs: str, ld: dict | None = None) -
     ranked = sorted(scores, key=lambda a: (scores[a]["score"], a in horiz_first), reverse=True)
     best, second = ranked[0], ranked[1]
     b, s = scores[best]["score"], scores[second]["score"]
-    tier = "medium" if b > 0.3 and b - s > 0.15 else "low"
+    # a clear winner is as sure as a confirmed OSD answer (_confirm_upright); a close call is flagged for a look
+    tier = "high" if b >= CONFIRM_SCORE and b - s >= CONFIRM_MARGIN else ("medium" if b > 0.3 and b - s > 0.15 else "low")
     if b < 0.05:  # no text at all: keep upright
         best, tier = 0, "low"
     return best, tier, {"scores": {str(k): v for k, v in scores.items()}, "best_score": b, "langs": langs}
