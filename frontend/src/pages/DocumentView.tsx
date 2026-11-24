@@ -169,6 +169,9 @@ export default function DocumentView() {
     if (k === 'purge') purge()
   }
   const multi = doc.pages.length > 1
+  // a plain-text file shows its text in the main view: no separate Text tab (a link to it opens Info)
+  const plainText = page?.kind === 'text'
+  const shownTab = plainText && tab === 'text' ? 'info' : tab
   // page statuses present in this document, in a fixed order, with page counts
   const counts: Record<string, number> = {}
   for (const p of doc.pages) counts[pageCat(p)] = (counts[pageCat(p)] || 0) + 1
@@ -229,16 +232,16 @@ export default function DocumentView() {
           </div>
         </div>}
         <div className="stage-area">
-          {page ? <PageCanvas page={page} q={q} mode={mode} preview={preview} edit={(stage: string, v: any, reset?: boolean) => { edit(stage, v, reset); setMode('result') }} onCancelEdit={() => setMode('result')} />
+          {page ? <PageCanvas page={page} q={q} at={at} mode={mode} preview={preview} edit={(stage: string, v: any, reset?: boolean) => { edit(stage, v, reset); setMode('result') }} onCancelEdit={() => setMode('result')} />
             : <div className="muted stage-msg">{doc.pages.length ? t('loading') : <><Loader2 size={16} className="spin" /> {doc.status_detail || t('not_ready')}</>}</div>}
         </div>
         <div className="side">
           <div className="tabs">
-            {(['pipeline', 'info', 'text'] as const).map((k) => <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{t(k)}</button>)}
+            {(plainText ? ['pipeline', 'info'] as const : ['pipeline', 'info', 'text'] as const).map((k) => <button key={k} className={shownTab === k ? 'active' : ''} onClick={() => setTab(k)}>{t(k)}</button>)}
           </div>
-          {tab === 'pipeline' && page && <PipelinePanel page={page} edit={edit} post={post} setMode={setMode} mode={mode} setPreview={setPreview} />}
-          {tab === 'info' && <InfoPanel doc={doc} q={q} focus={focus} page={page} pageNo={(doc.pages?.length || 0) > 1 ? pageIdx + 1 : null} />}
-          {tab === 'text' && page && <div className="page-pad"><div className="pre">{page.text ? <Marked text={page.text} q={q} scroll at={at} /> : t('no_text')}</div></div>}
+          {shownTab === 'pipeline' && page && <PipelinePanel page={page} edit={edit} post={post} setMode={setMode} mode={mode} setPreview={setPreview} />}
+          {shownTab === 'info' && <InfoPanel doc={doc} q={q} focus={focus} page={page} pageNo={(doc.pages?.length || 0) > 1 ? pageIdx + 1 : null} />}
+          {shownTab === 'text' && page &&<div className="page-pad"><div className="pre">{page.text ? <Marked text={page.text} q={q} scroll at={at} /> : t('no_text')}</div></div>}
         </div>
       </div>
     </div>
@@ -428,7 +431,7 @@ function TextLayer({ structure }: { structure: { width: number; height: number; 
   )
 }
 
-function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any; q: string; mode: string; preview: any; edit: (stage: string, v: any, reset?: boolean) => void; onCancelEdit: () => void }) {
+function PageCanvas({ page, q, at, mode, preview, edit, onCancelEdit }: { page: any; q: string; at?: { text: string; off: number }; mode: string; preview: any; edit: (stage: string, v: any, reset?: boolean) => void; onCancelEdit: () => void }) {
   const { t } = useT()
   const [structure, setStructure] = useState<any>(null)
   const [comparing, setComparing] = useState(false)
@@ -448,6 +451,10 @@ function PageCanvas({ page, q, mode, preview, edit, onCancelEdit }: { page: any;
   if (mode === 'crop' && page.original_url) return <Suspense fallback={null}><CropEditor page={page} onApply={(v) => edit('crop', v)} onCancel={onCancelEdit} /></Suspense>
   if (mode === 'mesh' && page.flatten_source_url) return <Suspense fallback={null}><MeshEditor page={page} onApply={(mesh) => edit('dewarp', { mesh })}
     onReset={() => edit('dewarp', { mesh: null })} onCancel={onCancelEdit} /></Suspense>
+  // a plain-text file: its text as it is, no page image
+  if (page.kind === 'text' && page.status === 'ready') return (
+    <div className="canvas-col"><div className="plain-text pre">{page.text ? <Marked text={page.text} q={q} scroll at={at} /> : t('no_text')}</div></div>
+  )
   if (!page.render_key && !page.rendered && page.status !== 'ready') return <div className="muted stage-msg">
     {page.status === 'queued' ? <><Clock size={16} /> {t('page_queued')}</> : <><Loader2 size={16} className="spin" /> {t('not_ready')}</>}</div>
   const tf = preview && !comparing ? `rotate(${(preview.rotate || 0) - (preview.deskew || 0)}deg)` : undefined
@@ -492,6 +499,11 @@ function PipelinePanel({ page, edit, post, setMode, mode, setPreview }: any) {
   const hist = page.history || []
   const curIdx = hist.findIndex((h: any) => h.current)
   const busy = ['queued', 'processing'].includes(page.status)
+  // a plain-text file goes through none of the steps: say so instead of listing them all as skipped
+  if (page.kind === 'text') {
+    const enc = st.ocr?.info?.encoding
+    return <div className="page-pad"><Why skip lines={[t('plain_text_note') + (enc ? ` ${t('encoding')}: ${enc.toUpperCase()}.` : '')]} /></div>
+  }
   return (
     <div>
       <div className="row pipe-head">
@@ -709,6 +721,7 @@ function skipWhy(t: (k: string) => string, s: string, d: any, manual: boolean): 
   if (!d || d.status !== 'skipped') return []
   const i = d.info || {}
   if (i.reason === 'born_digital_page') return [t('skip_born_digital')]
+  if (i.reason === 'plain_text_file') return [t('skip_plain_text')]
   if (s === 'layout' && i.reason === 'phase2') return [t('skip_layout_pdf')]
   if (s === 'dewarp') {
     const out = [t(manual ? 'skip_dewarp_manual' : 'skip_dewarp_auto')]
@@ -819,7 +832,7 @@ function InfoPanel({ doc, q = '', focus = '', page, pageNo = null }: { doc: any;
         ))}
       </div>
       {doc.versions.length > 1 && <div><label>{t('versions')}</label>{doc.versions.map((v: any) => <div key={v.id} className="small">v{v.number} · {v.pages} {t('pages').toLowerCase()} · {v.note} {v.current && <Check size={12} />}</div>)}</div>}
-      <AutoStages page={page} pageNo={pageNo} />
+      {page?.kind !== 'text' && <AutoStages page={page} pageNo={pageNo} />}
     </div>
   )
 }

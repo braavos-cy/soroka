@@ -497,6 +497,7 @@ input.switch:focus-visible { outline: 2px solid var(--accent-weak); }
 .compare-btn { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; }
 /* page image with the hold-to-compare button pinned to the bottom right corner of the viewing area */
 .canvas-col { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; flex: 1 0 auto; }
+.plain-text { width: 100%; max-width: 900px; max-height: none; flex: 1 1 auto; font-family: ui-monospace, Consolas, monospace; background: var(--panel); box-shadow: var(--shadow); padding: 16px 20px; }
 .canvas-col .compare-btn { margin-top: auto; align-self: flex-end; position: sticky; bottom: 0; z-index: 2; box-shadow: var(--shadow); }
 /* document just jumped to from its own page ("Show in folders") */
 @keyframes doc-flash { 0%, 60% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 3px transparent; } }

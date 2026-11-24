@@ -16,7 +16,7 @@ def accepted_name(filename: str) -> bool:
 
 
 def sniff(filename: str, data: bytes) -> tuple[str, str]:
-    """Returns (kind, mime). kind: image | pdf | office | zip | unsupported"""
+    """Returns (kind, mime). kind: image | pdf | office | text | zip | unsupported"""
     ext = os.path.splitext(filename.lower())[1]
     h = data[:32]
     if h.startswith(b"%PDF") or b"%PDF-" in data[:1024]:
@@ -47,8 +47,10 @@ def sniff(filename: str, data: bytes) -> tuple[str, str]:
         return ("office", _office_mime(ext)) if ext in OFFICE_EXT else ("office", "application/msword")
     if h.startswith(b"{\\rtf"):
         return "office", "application/rtf"
-    if ext in (".txt", ".csv"):
-        return "office", "text/csv" if ext == ".csv" else "text/plain"
+    if ext == ".txt":  # plain text: shown as text, not converted to PDF and rendered
+        return "text", "text/plain"
+    if ext == ".csv":  # converted by LibreOffice like a spreadsheet (keeps the table layout)
+        return "office", "text/csv"
     return "unsupported", "application/octet-stream"
 
 

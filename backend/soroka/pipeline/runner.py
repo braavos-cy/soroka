@@ -32,8 +32,8 @@ from . import cv as C
 from . import ocr as O
 from . import pagemodel as PM
 from .recipe import STAGES, normalize, stage_index
-from .sources import (decode_images, encode_image, office_to_pdf, pdf_page_kinds, pdf_page_words, render_pdf_page,
-                      render_pdf_scan)
+from .sources import (decode_images, decode_text, encode_image, office_to_pdf, pdf_page_kinds, pdf_page_words,
+                      render_pdf_page, render_pdf_scan)
 
 log = logging.getLogger("soroka.pipeline")
 TIER_RANK = {"high": 0, "medium": 1, "low": 2}
@@ -98,6 +98,8 @@ def split_document(db, doc: m.Document) -> list[int]:
         if kind == "image":
             for i, img in enumerate(decode_images(data)):
                 page_ids.append(_new_page(db, fo, i, "image", img, fo.mime in PHOTO_MIMES).id)
+        elif kind == "text":  # plain text: one page holding the whole text, nothing rendered
+            page_ids.append(_new_page(db, fo, 0, "text", None, False).id)
         elif kind in ("pdf", "office"):
             pdf = data
             if kind == "office":
@@ -171,6 +173,8 @@ def process_page(db, page: m.Page, from_stage: str = "quality", forced: bool = F
         run = PageRun(db, page, from_stage)
         if page.kind == "pdf_text":
             _process_text_page(db, page, run)
+        elif page.kind == "text":
+            _process_plain_text_page(page, run)
         else:
             _process_image_page(db, page, run, forced)
         page.stages = run.stages
@@ -215,6 +219,22 @@ def _process_text_page(db, page: m.Page, run: PageRun) -> None:
     _store_outputs(page, img, buf.getvalue(), {"words": words, "blocks": [], "width": img.shape[1],
                                               "height": img.shape[0]}, text, lang, ".jpg")
     run.record("outputs", "done", "high")
+
+
+def _process_plain_text_page(page: m.Page, run: PageRun) -> None:
+    """A .txt file: the text is decoded and kept as is. No image, thumbnail or PDF is made: the viewer shows the
+    text itself, and the document has no processed PDF (the original file and the plain text can be downloaded)."""
+    text, enc = decode_text(storage().get(page.file.blob_key))
+    # nothing to do: no image to fix and no text to recognise (the encoding is kept for the viewer)
+    for s in STAGES:
+        run.record(s, "skipped", None, reason="plain_text_file", **({"encoding": enc} if s == "ocr" else {}))
+    st = storage()
+    for k in (page.render_key, page.thumb_key, page.pdf_key, page.words_key):
+        st.delete(k)
+    page.render_key = page.thumb_key = page.pdf_key = page.words_key = None
+    page.width = page.height = 0
+    page.text = text
+    page.language = O.detect_language(text[:20000])[0]
 
 
 def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: list | None = None) -> None:

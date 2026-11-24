@@ -156,6 +156,38 @@ def pdf_page_words(data: bytes, index: int, dpi: int = 150) -> tuple[str, list[d
         doc.close()
 
 
+_BOMS = ((b"\xef\xbb\xbf", "utf-8"), (b"\xff\xfe\x00\x00", "utf-32-le"), (b"\x00\x00\xfe\xff", "utf-32-be"),
+         (b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be"))
+
+
+def decode_text(data: bytes) -> tuple[str, str]:
+    """A plain-text file as (text, encoding). A BOM decides; else UTF-8 when it decodes; else the legacy
+    single-byte encoding (Russian Windows / DOS, Latin) whose result has the most letters."""
+    for bom, enc in _BOMS:
+        if data.startswith(bom):
+            return _clean_text(data[len(bom):].decode(enc, errors="replace")), enc
+    try:
+        return _clean_text(data.decode("utf-8")), "utf-8"
+    except UnicodeDecodeError:
+        pass
+
+    def score(s: str) -> float:
+        # Cyrillic decoded with the wrong code page mixes case oddly and box-drawing / symbol characters; the right
+        # one gives mostly letters, with lowercase after lowercase
+        letters = sum(c.isalpha() for c in s)
+        odd = sum(not (c.isalnum() or c.isspace() or c in ".,;:!?-–—()[]\"'«»№%/\\+=*&@#$_<>|~`^{}") for c in s)
+        low_pairs = sum(a.islower() and b.islower() for a, b in zip(s, s[1:]))
+        return letters + low_pairs - 3 * odd
+
+    cands = [(data.decode(enc, errors="replace"), enc) for enc in ("cp1251", "cp866", "koi8-r", "cp1252")]
+    best = max(cands, key=lambda c: score(c[0][:20000]))
+    return _clean_text(best[0]), best[1]
+
+
+def _clean_text(s: str) -> str:
+    return s.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+
+
 def office_to_pdf(data: bytes, filename: str) -> bytes:
     ext = os.path.splitext(filename)[1].lower() or ".bin"
     with tempfile.TemporaryDirectory() as d:

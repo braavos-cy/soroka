@@ -134,6 +134,8 @@ const en = {
   why_cons_reopened: 'Too few real words were read, so the page was turned and read again (see Orientation).',
   // why a step was skipped
   skip_born_digital: 'Not needed: this page comes from a PDF that already contains text, so there is no photo to fix. The text was taken directly from the file.',
+  skip_plain_text: 'Not needed: this is a plain-text file.',
+  plain_text_note: 'A plain-text file: no processing is needed. The text is shown exactly as it is in the file, nothing is recognised or rendered.', encoding: 'Encoding',
   skip_layout_pdf: 'Not done yet for pages whose text comes directly from the PDF.',
   skip_dewarp_auto: 'The page looked flat (no curved crop outline), so flattening was not needed.',
   skip_dewarp_manual: 'Flattening was turned off by hand.',
@@ -273,6 +275,8 @@ const ru: Partial<Record<Key, string>> = {
   why_cons_garbled: 'Лишь {n}% распознанных слов — настоящие слова, текст может быть искажён.',
   why_cons_reopened: 'Прочиталось слишком мало настоящих слов, поэтому страница повёрнута и распознана заново (см. «Ориентация»).',
   skip_born_digital: 'Не требуется: страница из PDF, в котором уже есть текст, — исправлять нечего. Текст взят прямо из файла.',
+  skip_plain_text: 'Не требуется: это обычный текстовый файл.',
+  plain_text_note: 'Обычный текстовый файл: обработка не нужна. Текст показан ровно так, как он записан в файле, ничего не распознаётся и не отрисовывается.', encoding: 'Кодировка',
   skip_layout_pdf: 'Пока не выполняется для страниц, текст которых взят прямо из PDF.',
   skip_dewarp_auto: 'Страница выглядела ровной (граница обрезки не изогнута), выпрямление не понадобилось.',
   skip_dewarp_manual: 'Выпрямление выключено вручную.',

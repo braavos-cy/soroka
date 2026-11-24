@@ -262,7 +262,7 @@ class Page(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     file_original_id: Mapped[int] = mapped_column(ForeignKey("file_original.id"), index=True)
     source_index: Mapped[int] = mapped_column(Integer, default=0)
-    kind: Mapped[str] = mapped_column(String(20), default="image")  # image | pdf_text
+    kind: Mapped[str] = mapped_column(String(20), default="image")  # image | pdf_text | text (a plain-text file)
     original_key: Mapped[str | None] = mapped_column(String(300))  # normalized raster of the source page
     width: Mapped[int] = mapped_column(Integer, default=0)
     height: Mapped[int] = mapped_column(Integer, default=0)
