@@ -472,11 +472,12 @@ def purge(db: DB, d: m.Document, stopped: bool = False) -> None:
     page_ids = set()
     for v in db.query(m.DocumentVersion).filter_by(document_id=d.id).all():
         page_ids.update(v.page_ids)
-    # pages shared with other documents (copied pages) are kept
-    shared = set()
-    if page_ids:
-        for v in db.query(m.DocumentVersion).filter(m.DocumentVersion.document_id != d.id).all():
-            shared.update(set(v.page_ids) & page_ids)
+    # pages shared with other documents (copied pages) are kept; looked up in the database, not by loading every
+    # other document's versions (emptying a large trash did that once per document)
+    shared = {r[0] for r in db.execute(text(
+        "SELECT DISTINCT CAST(e AS int) FROM document_version v CROSS JOIN LATERAL jsonb_array_elements(v.page_ids) e "
+        "WHERE v.document_id <> :d AND CAST(e AS int) = ANY(:ids)"), {"d": d.id, "ids": list(page_ids)})} \
+        if page_ids else set()
     for pid in page_ids - shared:
         pg = db.get(m.Page, pid)
         if pg:
@@ -828,14 +829,15 @@ def review_queue(include_medium: bool = False, limit: int = 100, p: Principal = 
 @router.get("/stats")
 def stats(p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
     from ..jobs import queue_lengths
-    c = dict(db.query(m.Document.status, func.count()).filter(m.Document.trashed_at.is_(None))
-             .group_by(m.Document.status).all())
-    return {"documents": c, "review": db.query(m.Document).filter(m.Document.needs_review.is_(True),
-                                                                  m.Document.trashed_at.is_(None),
-                                                                  m.Document.status != "rejected").count(),
-            "trash": db.query(m.Document).filter(m.Document.trashed_at.is_not(None)).count(),
-            "unfiled": db.query(m.Document).filter(m.Document.trashed_at.is_(None), m.Document.status != "rejected",
-                                                   m.Document.folder_id.is_(None)).count(),
+    # every count in one pass over the documents (polled every few seconds by every open tab)
+    trashed = m.Document.trashed_at.is_not(None)
+    rows = db.query(m.Document.status, trashed, func.count(),
+                    func.count().filter(m.Document.needs_review.is_(True)),
+                    func.count().filter(m.Document.folder_id.is_(None))).group_by(m.Document.status, trashed).all()
+    live = [r for r in rows if not r[1]]
+    listed = [r for r in live if r[0] != "rejected"]
+    return {"documents": {r[0]: r[2] for r in live}, "review": sum(r[3] for r in listed),
+            "trash": sum(r[2] for r in rows if r[1]), "unfiled": sum(r[4] for r in listed),
             "rejected_new": _rejected_new(db, p.user),
             "tag_max_length": appsettings.get(db, "tag_max_length"),
             "version": _data_version(db),

@@ -542,9 +542,11 @@ def _ocr_and_outputs(db, page: m.Page, run: PageRun, clean: np.ndarray) -> dict:
                n_words=res["n_words"], language=lang, passes=passes)
     # layout (basic: tesseract blocks; PP-Structure in phase 2)
     blocks = res["blocks"]
+    by_block: dict = {}
+    for x in res["words"]:  # one pass over the words, not one per block
+        by_block.setdefault(x["block"], []).append(x)
     for b in blocks:
-        bw = [x for x in res["words"] if x["block"] == b["id"]]
-        b["text"] = O.words_to_text(bw)
+        b["text"] = O.words_to_text(by_block.get(b["id"], []))
         b["lang"] = O.detect_language(b["text"])[0]
     run.record("layout", "done", "high", "tesseract_blocks", blocks=len(blocks))
     structured = {"width": w, "height": h, "dpi": dpi, "language": lang, "blocks": blocks, "words": res["words"]}
@@ -628,9 +630,7 @@ def finalize_document(document_id: int) -> None:
         accept = [("non_document" if _marked_non_document(db, p) else
                    ((p.stages or {}).get("acceptance", {}).get("info", {}) or {}).get("value")) for p in pages
                   if p.kind == "image"]
-        manual_doc = any(normalize(db.get(m.Recipe, p.current_recipe_id).data)["acceptance"]["manual"] and
-                         normalize(db.get(m.Recipe, p.current_recipe_id).data)["acceptance"]["value"] == "document"
-                         for p in pages if p.current_recipe_id)
+        manual_doc = any(_manual_acceptance(db, p) == "document" for p in pages)
         all_image = pages and all(p.kind == "image" for p in pages)
         if all_image and not forced and not manual_doc and accept and all(a == "non_document" for a in accept):
             _reject(db, doc, "classified_non_document")
@@ -650,7 +650,7 @@ def finalize_document(document_id: int) -> None:
 
 def _reject(db, doc: m.Document, reason: str) -> None:
     doc.status = "rejected"
-    size = sum(db.get(m.FileOriginal, f).size for f in doc.source_file_ids if db.get(m.FileOriginal, f))
+    size = sum(fo.size for fo in (db.get(m.FileOriginal, f) for f in doc.source_file_ids) if fo)
     days = appsettings.get(db, "rejected_days")
     ri = db.query(m.RejectedItem).filter_by(document_id=doc.id).one_or_none()
     if ri is None:
@@ -766,10 +766,15 @@ def stop_page(db, page: m.Page) -> None:
     db.commit()
 
 
-def _marked_non_document(db, page: m.Page) -> bool:
+def _manual_acceptance(db, page: m.Page) -> str | None:
+    """What the user set the page to (document / non_document / …), or None when it is automatic."""
     rec = db.get(m.Recipe, page.current_recipe_id) if page.current_recipe_id else None
     acc = normalize(rec.data if rec else {})["acceptance"]
-    return bool(acc.get("manual")) and acc.get("value") == "non_document"
+    return acc.get("value") if acc.get("manual") else None
+
+
+def _marked_non_document(db, page: m.Page) -> bool:
+    return _manual_acceptance(db, page) == "non_document"
 
 
 def resume_processing(db, doc: m.Document) -> bool:
