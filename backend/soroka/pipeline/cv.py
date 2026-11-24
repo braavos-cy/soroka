@@ -580,6 +580,17 @@ def _score_page_quad(q: np.ndarray, lab: np.ndarray, grad: np.ndarray,
     return score, sig
 
 
+INK_OUTSIDE_PAGE = 0.004  # share of ink (text) outside a rectangle in a scan above which it is not the page
+
+
+def _ink_outside(quad: np.ndarray, ink: np.ndarray) -> float:
+    """Share of the area outside `quad` (in `ink`'s pixels) that is ink."""
+    mask = np.zeros(ink.shape, np.uint8)
+    cv2.fillPoly(mask, [quad.round().astype(np.int32)], 1)
+    out = mask == 0
+    return float(ink[out].mean()) if out.any() else 0.0
+
+
 def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, dict]:
     """Returns (candidates, chosen, tier, signals). Quads are in full-resolution pixel coords.
 
@@ -630,6 +641,15 @@ def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, d
         cands.append(Candidate(name, {"quad": (q / s).round(1).tolist()}, round(sc, 3), sig))
 
     flat = _looks_flat_scan(small)
+    if flat > 0.7:
+        # a scan: a rectangle with text outside it is something on the page (a printed photo, a table, a picture
+        # with its caption), not the page itself; around a page lying on a light desk there is only desk
+        for c in cands:
+            if c.signals["area"] < 0.97:
+                out = _ink_outside(np.array(c.value["quad"], np.float32) * s, ink)
+                c.signals["ink_outside"] = round(out, 4)
+                if out >= INK_OUTSIDE_PAGE:
+                    c.score = round(c.score * 0.5, 3)
     best_quad = max((c.score for c in cands if c.signals["area"] < 0.97), default=0.0)
     # full frame: a scan / already-cropped page, or nothing convincing found
     # (a light desk also has light, uniform borders: a quad with clear contrast on >= 3 sides still wins)
@@ -641,6 +661,8 @@ def detect_boundary(img: np.ndarray) -> tuple[list[Candidate], Candidate, str, d
     if flat > 0.7:
         bb = _quad_blank_border(img)
         if bb is not None:
+            bb[1]["ink_outside"] = round(_ink_outside(bb[0] * s, ink), 4)
+        if bb is not None and bb[1]["ink_outside"] < INK_OUTSIDE_PAGE:  # text outside: a picture on the page
             cands.append(Candidate("blank_border", {"quad": bb[0].round(1).tolist()}, 0.88, bb[1]))
 
     chosen = max(cands, key=lambda c: c.score)
