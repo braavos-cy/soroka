@@ -439,7 +439,6 @@ def _acceptance_with_ocr(db, run: PageRun, result: dict) -> None:
     info = dict(st.get("info") or {})
     prior = float(info.get("score", 0.0))
     doc_t = appsettings.get(db, "accept_doc_threshold")
-    rej_t = appsettings.get(db, "accept_reject_threshold")
     n = result.get("real_words", O.real_words(result.get("words", [])))
     if n >= 10:
         val, tier = "document", "high"
@@ -534,7 +533,8 @@ def _ocr_and_outputs(db, page: m.Page, run: PageRun, clean: np.ndarray) -> dict:
                 if res2["valid_ratio"] + res2["mean_conf"] / 200 > res["valid_ratio"] + res["mean_conf"] / 200:
                     res = res2
                     text = O.words_to_text(res["words"])
-        img_bytes = open(path, "rb").read()
+        with open(path, "rb") as f:
+            img_bytes = f.read()
     ocr_tier = "high" if res["mean_conf"] >= 80 else ("medium" if res["mean_conf"] >= 60 else "low")
     if res["n_words"] == 0:
         ocr_tier = "medium"

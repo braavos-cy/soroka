@@ -18,7 +18,6 @@ const INFO_STAGES = ['quality', 'layout', 'outputs']
 const TIER_RANK: Record<string, number> = { low: 0, medium: 1, high: 2 }
 const worstTier = (...ts: (string | null | undefined)[]) =>
   ts.filter((x): x is string => !!x && x in TIER_RANK).sort((a, b) => TIER_RANK[a] - TIER_RANK[b])[0] ?? null
-type Pt = [number, number]
 
 // what the badge under a page thumbnail shows: a processing state, or the quality tier (reviewed = OK)
 const CAT_ORDER = ['high', 'medium', 'low', 'error', 'processing', 'queued', 'stopped', 'excluded', 'none']
@@ -532,7 +531,7 @@ function PipelinePanel({ page, edit, post, setMode, mode, setPreview }: any) {
                 <Why lines={[...stageWhy(t, s, d), ...(cons ? stageWhy(t, 'consistency', cons) : [])]} />
                 <Why skip lines={skipWhy(t, s, d, !!manual)} />
                 {d.method && <div className="small muted">{d.method}</div>}
-                {isImage && <StageEditor stage={s} page={page} rec={rec} d={d} edit={edit} setMode={setMode} mode={mode} setPreview={setPreview} />}
+                {isImage && <StageEditor stage={s} page={page} rec={rec} edit={edit} setMode={setMode} mode={mode} setPreview={setPreview} />}
                 <Signals info={d.info} />
                 {cons && <>
                   <div className="row small"><span className="muted">{t('stage_consistency')}</span><StageBadge tier={cons.tier} /></div>
@@ -572,7 +571,7 @@ function Signals({ info }: { info: any }) {
   )
 }
 
-function StageEditor({ stage, page, rec, d, edit, setMode, mode, setPreview }: any) {
+function StageEditor({ stage, page, rec, edit, setMode, mode, setPreview }: any) {
   const { t } = useT()
   const [deskew, setDeskew] = useState<number>(rec.deskew.angle)
   const [cl, setCl] = useState({ mode: rec.cleanup.mode || 'gray', strength: rec.cleanup.strength ?? 1 })

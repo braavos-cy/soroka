@@ -1,7 +1,6 @@
 """Periodic housekeeping: trash/rejected retention, storage-pressure rule, watched import dir,
 connector health alerts, expired sessions. Runs as its own small container."""
 import logging
-import os
 import shutil
 import smtplib
 import time

@@ -96,12 +96,6 @@ def render_pdf_scan(data: bytes, index: int) -> np.ndarray:
         doc.close()
 
 
-def pdf_pages(data: bytes) -> list[dict]:
-    """Per page: has a real text layer? -> pdf_text, else render to an image page (300 dpi)."""
-    return [dict(pg, image=render_pdf_scan(data, pg["index"])) if pg["kind"] == "image" else pg
-            for pg in pdf_page_kinds(data)]
-
-
 def render_pdf_page(data: bytes, index: int, dpi: int = 150) -> np.ndarray:
     doc = pdfium.PdfDocument(data)
     try:

@@ -103,31 +103,6 @@ def _aspect_score(q: np.ndarray) -> float:
     return max(math.exp(-abs(r - t) / 0.15) for t in (1.414, 1.294, 1.586, 1.0, 1.75))
 
 
-def _edge_contrast(grad: np.ndarray, q: np.ndarray) -> float:
-    vals = []
-    for i in range(4):
-        p0, p1 = q[i], q[(i + 1) % 4]
-        n = int(max(8, np.linalg.norm(p1 - p0) / 3))
-        xs = np.clip(np.linspace(p0[0], p1[0], n).astype(int), 0, grad.shape[1] - 1)
-        ys = np.clip(np.linspace(p0[1], p1[1], n).astype(int), 0, grad.shape[0] - 1)
-        # max in a small neighbourhood tolerates 1-2 px corner error
-        vals.append(float(np.mean([grad[max(0, y - 2):y + 3, max(0, x - 2):x + 3].max() for x, y in zip(xs, ys)])))
-    ratio = min(vals) / (float(grad.mean()) + 1e-6)
-    return min(1.0, ratio / 4.0)
-
-
-def _score_quad(q: np.ndarray, area_total: float, grad: np.ndarray) -> tuple[float, dict]:
-    area = cv2.contourArea(q) / area_total
-    area_s = 1.0 if 0.15 <= area <= 0.97 else (0.4 if area > 0.97 else 0.1)
-    convex = cv2.isContourConvex(q.astype(np.int32).reshape(-1, 1, 2))
-    ang = _angles_ok(q) if convex else 0.0
-    asp = _aspect_score(q)
-    edge = _edge_contrast(grad, q)
-    score = 0.35 * edge + 0.25 * ang + 0.25 * area_s + 0.15 * asp
-    return score, {"area": round(area, 3), "angles": ang, "aspect": round(asp, 3), "edge": round(edge, 3),
-                   "convex": bool(convex)}
-
-
 def _approx_quad(contour: np.ndarray) -> np.ndarray | None:
     peri = cv2.arcLength(contour, True)
     for eps in (0.01, 0.02, 0.03, 0.05, 0.08):
@@ -722,7 +697,7 @@ def refine_quad(img: np.ndarray, quad: list, max_frac: float = 0.08, max_far: fl
     depths = {}
     for side in range(4):  # top, right, bottom, left: rotate so the side is on top, ends ordered clockwise
         v = np.rot90(lab, side)
-        hh, ww = v.shape[:2]
+        hh = v.shape[0]
         maxd = max(2, int(max_frac * hh))
         far = int(max_far * hh)
         # reference paper colour: the band just inside the trimming zone, same side (follows shadows / tints)

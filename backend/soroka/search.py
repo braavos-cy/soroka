@@ -248,10 +248,6 @@ MAX_HITS = 30
 HL_OPTS = f"StartSel=\x01,StopSel=\x02,MaxFragments={MAX_HITS},MaxWords=16,MinWords=6,FragmentDelimiter=\x03"
 
 
-def headline(tsq):
-    return func.ts_headline("russian", m.Document.search_text, tsq, HL_OPTS)
-
-
 def split_hits(hl: str | None) -> list[str]:
     """ts_headline output -> one single-line fragment per place the words occur (hits marked \\x01 … \\x02)."""
     return [" ".join(f.replace(ZWSP, "").split()) for f in (hl or "").split("\x03") if "\x01" in f]
@@ -297,7 +293,7 @@ def phrase_tsquery(q: str):
     return func.phraseto_tsquery("russian", literal(norm(" ".join(term for _, term in parts).lower())))
 
 
-HIT_PARTS =("title", "context", "text")  # order of headlines_by_part
+HIT_PARTS = ("title", "context", "text")  # order of headlines_by_part
 
 
 def rank(tsq):

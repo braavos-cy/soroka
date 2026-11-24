@@ -26,12 +26,6 @@ class LocalStorage:
         os.replace(tmp, p)
         return key
 
-    def put_file(self, key: str, src: str | Path) -> str:
-        p = self.path(key)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, p)
-        return key
-
     def get(self, key: str) -> bytes:
         return self.path(key).read_bytes()
 

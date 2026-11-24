@@ -1,22 +1,21 @@
 """Documents, pages, recipes/editor, review queue, trash, rejected, downloads."""
 import io
-import json
 import os
 import zipfile
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import and_, case, exists, func, not_, or_, select, text
+from sqlalchemy import and_, case, exists, func, or_, select, text
 from sqlalchemy.orm import Session as DB
 
 from .. import appsettings
 from .. import models as m
 from ..db import get_db, now
-from ..deps import Principal, admin, admin_reauth, audit, client_ip, require_reauth, ui_user
-from ..jobs import enqueue_document, enqueue_finalize, enqueue_page
-from ..pipeline.recipe import EDITABLE, apply_edit, default_recipe, normalize
+from ..deps import Principal, admin, audit, client_ip, ui_user
+from ..jobs import enqueue_finalize, enqueue_page
+from ..pipeline.recipe import apply_edit, default_recipe, normalize
 from ..search import (HIT_PARTS, build_tsquery, current_page_ids, exact_filters, exact_hit_filter, headlines_by_part,
                       index_document, locate_hits, merge_hits, phrase_match, rank, split_hits)
 from ..storage import storage
@@ -748,16 +747,6 @@ def _apply_acceptance(db: DB, pg: m.Page, value: str, p: Principal) -> None:
             stop_processing(db, d)
         # several pages: the page stays (marked, not processed); removing pages comes later
     db.commit()
-
-
-def _new_version(db: DB, d: m.Document, page_ids: list[int], user_id: int | None, note: str) -> m.DocumentVersion:
-    last = db.query(func.max(m.DocumentVersion.number)).filter_by(document_id=d.id).scalar() or 0
-    v = m.DocumentVersion(document_id=d.id, number=last + 1, page_ids=page_ids, note=note, created_by=user_id)
-    db.add(v)
-    db.flush()
-    d.current_version_id = v.id
-    d.page_count = len(page_ids)
-    return v
 
 
 class GotoIn(BaseModel):
