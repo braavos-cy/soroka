@@ -33,12 +33,14 @@ def gray(img: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------- 1. quality
-def quality(img: np.ndarray) -> dict:
+def quality(img: np.ndarray, page: np.ndarray | None = None) -> dict:
+    """Blur, brightness and resolution of the photo; glare on `page` (the cropped page: a light desk around it
+    must not count as paper) when given, else on the photo."""
     small, _ = downscale(img, 1200)
     g = gray(small)
     blur = float(cv2.Laplacian(g, cv2.CV_64F).var())
     mean = float(g.mean())
-    glare = float((g > 250).mean())
+    glare, spots = glare_share(g if page is None else gray(downscale(page, 1200)[0]))
     dark = float((g < 30).mean())
     h, w = img.shape[:2]
     flags = []
@@ -46,13 +48,90 @@ def quality(img: np.ndarray) -> dict:
         flags.append("blurry")
     if mean < 70 or dark > 0.4:
         flags.append("dark")
-    if glare > 0.08:
+    if glare >= GLARE_MIN:
         flags.append("glare")
     if min(h, w) < 900:
         flags.append("low_resolution")
     tier = "high" if not flags else ("medium" if len(flags) == 1 else "low")
-    return {"blur": round(blur, 1), "brightness": round(mean, 1), "glare": round(glare, 4), "dark": round(dark, 4),
-            "width": w, "height": h, "flags": flags, "tier": tier}
+    return {"blur": round(blur, 1), "brightness": round(mean, 1), "glare": round(glare, 4), "glare_spots": spots,
+            "dark": round(dark, 4), "width": w, "height": h, "flags": flags, "tier": tier}
+
+
+GLARE_MIN = 0.002  # share of the page covered by glare spots that is worth a warning
+GLARE_SAT = 245  # blown out
+GLARE_SPOT_MIN = 0.0015  # smaller bright specks are ignored
+GLARE_SPOT_MAX = 0.4  # larger: not a spot but the paper itself
+GLARE_PAPER_MIN = 120  # brighter than this counts as paper (darker: desk, pictures, shadow)
+GLARE_LIGHT_MAX = 240  # blown out where the lighting says the paper is at most this bright: glare
+GLARE_PAPER_BLOWN = 0.85  # this much of the paper blown out: a scan or an overexposed photo, no spot to find
+# brightness change per pixel at a spot's edge: glare fades (1-15), a printed white shape ends sharply (~150)
+GLARE_EDGE_MAX = 60
+
+
+def glare_share(g: np.ndarray) -> tuple[float, int]:
+    """Share of the image covered by glare spots, and how many there are.
+
+    Glare is a blown-out patch the lighting of the page does not explain: a lamp's reflection adds light to one
+    part of it. Measured on the paper without its ink (a closing removes the dark strokes):
+    - when the paper itself is blown out (a scan, a photo overexposed as a whole) there is no spot to speak of;
+    - otherwise the page's lighting is fitted as a smooth surface over the paper (brighter towards the window or
+      lamp, darker away from it). A part that is blown out only because it lies in the brightest light matches that
+      surface; a spot that is blown out where the surface says the paper is darker is glare, if its edge fades
+      softly into the paper (a white shape printed on the page, like a sun in a photo, ends sharply)."""
+    bg = cv2.morphologyEx(g, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
+    paperish = bg[bg > GLARE_PAPER_MIN]  # paper (and light desks), not dark background or pictures
+    if paperish.size < 0.1 * g.size or float((paperish >= GLARE_SAT).mean()) >= GLARE_PAPER_BLOWN:
+        return 0.0, 0  # the paper itself is blown out
+    sat = bg >= GLARE_SAT
+    n_px = g.size
+    if sat.mean() < GLARE_SPOT_MIN:
+        return 0.0, 0
+    light = _paper_lighting(bg)
+    spot = (sat & (light <= GLARE_LIGHT_MAX)).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(spot, connectivity=8)
+    # how steeply brightness falls off at a spot's edge: a reflection fades softly into the paper, a white shape
+    # printed on the page (a sun in a photo, a white box in a picture) ends sharply
+    soft = cv2.GaussianBlur(bg.astype(np.float32), (0, 0), 2)
+    steep = cv2.magnitude(cv2.Sobel(soft, cv2.CV_32F, 1, 0), cv2.Sobel(soft, cv2.CV_32F, 0, 1))
+    areas = []
+    for i in range(1, count):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        # a speck is ignored; an area this large is the paper itself (a white page around a darker picture)
+        if not GLARE_SPOT_MIN * n_px <= area <= GLARE_SPOT_MAX * n_px:
+            continue
+        x, y, w, h = (int(v) for v in stats[i, :4])
+        x0, y0, x1, y1 = max(0, x - 4), max(0, y - 4), min(g.shape[1], x + w + 4), min(g.shape[0], y + h + 4)
+        comp = (labels[y0:y1, x0:x1] == i).astype(np.uint8)
+        edge = (cv2.dilate(comp, np.ones((7, 7), np.uint8)) > 0) & (comp == 0)
+        if edge.any() and float(np.median(steep[y0:y1, x0:x1][edge])) <= GLARE_EDGE_MAX:
+            areas.append(area)
+    return sum(areas) / n_px, len(areas)
+
+
+def _paper_lighting(bg: np.ndarray, step: int = 8) -> np.ndarray:
+    """The page's lighting: a quadratic surface fitted to the unsaturated paper (robustly: points far off the
+    surface, such as a desk edge or a picture, are dropped and the fit repeated)."""
+    h, w = bg.shape
+    small = bg[::step, ::step].astype(np.float32)
+    yy, xx = np.mgrid[0:h:step, 0:w:step].astype(np.float32)
+    xx, yy = xx / w, yy / h
+    keep = (small > GLARE_PAPER_MIN) & (small < GLARE_SAT)
+    if keep.sum() < 50:
+        return np.full(bg.shape, 255.0, np.float32)
+
+    def terms(x, y):
+        return np.stack([np.ones_like(x), x, y, x * x, x * y, y * y], axis=-1)
+
+    a = terms(xx, yy)
+    coef = None
+    for _ in range(3):
+        coef, *_ = np.linalg.lstsq(a[keep], small[keep], rcond=None)
+        resid = np.abs(a @ coef - small)
+        keep &= resid < 20
+        if keep.sum() < 50:
+            break
+    fy, fx = np.mgrid[0:h, 0:w].astype(np.float32)
+    return terms(fx / w, fy / h) @ coef
 
 
 # ---------------------------------------------------------------- 3. page boundary

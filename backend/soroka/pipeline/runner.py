@@ -309,11 +309,8 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
     rec = run.recipe
     orig = _load_original(page)
 
-    # 1. quality (cheap, informational)
-    q = C.quality(orig) if run.auto("quality") or "quality" not in run.stages else None
-    if q:
-        qt = q.pop("tier")
-        run.record("quality", "done", qt, "classic", **q)
+    # 1. quality (cheap, informational): measured below, once the page is cropped (glare is judged on the page)
+    want_quality = run.auto("quality") or "quality" not in run.stages
 
     # 3. boundary candidates (computed before acceptance: boundary success is an acceptance signal)
     boundary_score = 0.5
@@ -373,6 +370,9 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
     if not d["mesh_edited"]:
         d["mesh"] = proposed  # the model's map as an editable mesh
     flat = img
+    if want_quality:
+        q = C.quality(orig, page=img)
+        run.record("quality", "done", q.pop("tier"), "classic", **q)
     if stage_index("dewarp") >= run.from_idx:
         curv = C.text_line_curvature(img)
         tier = "high" if curv < 0.15 else ("medium" if curv < 0.3 else "low")
