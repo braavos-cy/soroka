@@ -12,3 +12,4 @@ connectors/whatsapp-test/downloads/
 backend/eval/data*/
 backend/eval/results/
 graphify-out
+tmp/
