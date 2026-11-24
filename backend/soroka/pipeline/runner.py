@@ -214,8 +214,10 @@ def _process_text_page(db, page: m.Page, run: PageRun) -> None:
         words = words + img_words
         tier = "high" if info["mean_conf"] >= 80 else "medium"
         run.record("ocr", "done", tier, "pdf_text_layer+image_ocr", words=len(words), **info)
-    else:
-        run.record("ocr", "done", "high", "pdf_text_layer", words=len(words), images=info["images"])
+    elif info["images"]:  # the pictures were read, but none holds text: the text is the file's own
+        run.record("ocr", "done", "high", "pdf_text_layer+image_ocr", words=len(words), **info)
+    else:  # nothing was recognised: the text came from the file and there are no pictures
+        run.record("ocr", "skipped", None, "pdf_text_layer", reason="text_from_file", words=len(words), images=0)
     run.record("layout", "skipped", None, reason="phase2")
     run.record("consistency", "skipped", None)
     lang, _ = O.detect_language(text)

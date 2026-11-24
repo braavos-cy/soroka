@@ -717,9 +717,17 @@ function stageWhy(t: (k: string) => string, s: string, d: any): string[] {
 
 /** Why a step was skipped (keys skip_*); `manual` = the step's recipe was set by hand. */
 function skipWhy(t: (k: string) => string, s: string, d: any, manual: boolean): string[] {
+  // a page whose text came from the file: OCR read only its pictures (says so, so the checkmark is not taken for
+  // the whole page having been recognised)
+  if (s === 'ocr' && d?.status === 'done' && d.method === 'pdf_text_layer+image_ocr') {
+    const i = d.info || {}
+    return [i.images_with_text ? t('ocr_from_file_pics').replace('{m}', String(i.images)).replace('{n}', String(i.images_with_text))
+      : t('ocr_from_file_no_pic_text').replace('{n}', String(i.images))]
+  }
   if (!d || d.status !== 'skipped') return []
   const i = d.info || {}
   if (i.reason === 'born_digital_page') return [t('skip_born_digital')]
+  if (i.reason === 'text_from_file') return [t('skip_text_from_file')]
   if (i.reason === 'plain_text_file') return [t('skip_plain_text')]
   if (s === 'layout' && i.reason === 'phase2') return [t('skip_layout_pdf')]
   if (s === 'dewarp') {
