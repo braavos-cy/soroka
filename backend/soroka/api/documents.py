@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import and_, case, exists, func, or_, select, text
+from sqlalchemy import Boolean, and_, case, exists, func, literal_column, not_, or_, select, text
 from sqlalchemy.orm import Session as DB
 
 from .. import appsettings
@@ -37,6 +37,26 @@ SORTS["title"] = SORTS["title_asc"]  # older links
 _ext_raw = func.lower(func.coalesce(func.substring(m.FileOriginal.filename, r"\.([A-Za-z0-9]{1,10})$"), ""))
 _file_ext = case((_ext_raw == "jpeg", "jpg"), (_ext_raw == "tif", "tiff"), else_=_ext_raw)
 _doc_has_file = m.Document.source_file_ids.op("@>")(func.jsonb_build_array(m.FileOriginal.id))
+
+
+def _page_exists(status: str) -> str:
+    """SQL: one of the document's current pages has this status."""
+    return ("EXISTS (SELECT 1 FROM document_version v JOIN page pg ON v.page_ids @> to_jsonb(pg.id) "
+            f"WHERE v.id = document.current_version_id AND pg.status = '{status}')")
+
+
+def _sql_bool(sql: str):
+    """A raw SQL condition that can be combined and negated like any other column expression."""
+    return literal_column(f"({sql})", Boolean)
+
+
+# Status filter conditions
+# failed: the whole document (e.g. a password-protected PDF that cannot be opened) or any of its current pages
+_has_error = or_(m.Document.status == "error", _sql_bool(_page_exists("error")))
+# 'processing' documents whose pages all still wait for a worker are shown as queued (see waiting_docs)
+_waiting = _sql_bool(f"{_page_exists('queued')} AND NOT {_page_exists('processing')}")
+_is_queued = or_(m.Document.status == "queued", and_(m.Document.status == "processing", _waiting))
+_is_processing = and_(m.Document.status == "processing", not_(_waiting))
 
 
 def _ids(s: str | None) -> list[int]:
@@ -128,12 +148,19 @@ def list_documents(
         qry = qry.filter(m.Document.language.in_(language.split(",")))
     if status:
         qry = qry.filter(m.Document.status.in_(status.split(",")))
+    # the Status filter (named "review" in links from before it had the error state)
     if review == "needs_review":
         qry = qry.filter(m.Document.needs_review.is_(True))
     elif review == "check":
         qry = qry.filter(m.Document.tier == "medium")
     elif review == "ok":
-        qry = qry.filter(m.Document.needs_review.is_(False))
+        qry = qry.filter(m.Document.status == "ready", m.Document.needs_review.is_(False), ~_has_error)
+    elif review == "error":
+        qry = qry.filter(_has_error)
+    elif review == "queued":
+        qry = qry.filter(_is_queued)
+    elif review == "processing":
+        qry = qry.filter(_is_processing)
     if sender or chat:
         qry = qry.join(m.IngestEvent, m.IngestEvent.id == m.Document.ingest_event_id)
         if sender:
