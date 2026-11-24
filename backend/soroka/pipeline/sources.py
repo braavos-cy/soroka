@@ -7,6 +7,7 @@ import tempfile
 import cv2
 import numpy as np
 import pypdfium2 as pdfium
+import pypdfium2.raw as pdfium_c
 from PIL import Image, ImageOps, ImageSequence
 
 try:
@@ -68,17 +69,55 @@ def _render_scan(page) -> np.ndarray:
     return cv2.cvtColor(np.asarray(bmp.to_pil().convert("RGB")), cv2.COLOR_RGB2BGR)
 
 
-def pdf_page_kinds(data: bytes) -> list[dict]:
+def pdf_page_kinds(data: bytes, digital: bool = False) -> list[dict]:
     """Per page: has a real text layer? -> pdf_text, else image (rendered later, per page, by render_pdf_scan).
-    Cheap: nothing is rendered, so a 200-page scan is split in seconds and without holding 200 bitmaps."""
+    Cheap: nothing is rendered, so a 200-page scan is split in seconds and without holding 200 bitmaps.
+    digital: the PDF was made from an office file, so no page is a scan or photo, however little text it has
+    (a slide with a short title, a small table); pictures in it are OCRed on their own (pdf_page_images)."""
     doc = pdfium.PdfDocument(data)
     try:
         out = []
         for i in range(len(doc)):
             page = doc[i]
-            out.append({"kind": "pdf_text" if _page_has_text(page) else "image", "index": i})
+            out.append({"kind": "pdf_text" if digital or _page_has_text(page) else "image", "index": i})
             page.close()
         return out
+    finally:
+        doc.close()
+
+
+MIN_IMAGE_PX = 64  # smaller pictures (icons, bullets, lines) hold no readable text
+MIN_IMAGE_SHARE = 0.01  # of the page area, as shown
+MAX_IMAGES = 20  # per page
+
+
+def pdf_page_images(data: bytes, index: int) -> list[tuple[np.ndarray, tuple[float, float, float, float]]]:
+    """The pictures placed on a PDF page that may hold text, at their own resolution, each with where it is shown
+    (left, top, right, bottom in points from the page's top-left corner). Biggest first."""
+    doc = pdfium.PdfDocument(data)
+    try:
+        page = doc[index]
+        pw, ph = page.get_size()
+        found = []
+        for obj in page.get_objects(filter=(pdfium_c.FPDF_PAGEOBJ_IMAGE,), max_depth=5):
+            try:
+                left, bottom, right, top = obj.get_pos()
+                shown = max(0.0, right - left) * max(0.0, top - bottom)
+                if shown < MIN_IMAGE_SHARE * pw * ph:
+                    continue
+                try:  # the picture's own pixels (rendering it gives only its size as shown, at 72 dpi)
+                    pil = obj.get_bitmap(render=False).to_pil()
+                except Exception:  # noqa: BLE001 - a format pdfium hands out only rendered
+                    pil = obj.get_bitmap(render=True).to_pil()
+                arr = np.asarray(pil.convert("RGB"))
+            except Exception:  # noqa: BLE001 - an image pdfium cannot decode is skipped, the page text is kept
+                continue
+            if min(arr.shape[:2]) < MIN_IMAGE_PX:
+                continue
+            found.append((shown, cv2.cvtColor(arr, cv2.COLOR_RGB2BGR), (left, ph - top, right, ph - bottom)))
+        page.close()
+        found.sort(key=lambda f: -f[0])
+        return [(img, box) for _, img, box in found[:MAX_IMAGES]]
     finally:
         doc.close()
 

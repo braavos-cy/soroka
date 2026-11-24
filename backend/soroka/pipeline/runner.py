@@ -32,8 +32,8 @@ from . import cv as C
 from . import ocr as O
 from . import pagemodel as PM
 from .recipe import STAGES, normalize, stage_index
-from .sources import (decode_images, decode_text, encode_image, office_to_pdf, pdf_page_kinds, pdf_page_words,
-                      render_pdf_page, render_pdf_scan)
+from .sources import (decode_images, decode_text, encode_image, office_to_pdf, pdf_page_images, pdf_page_kinds,
+                      pdf_page_words, render_pdf_page, render_pdf_scan)
 
 log = logging.getLogger("soroka.pipeline")
 TIER_RANK = {"high": 0, "medium": 1, "low": 2}
@@ -106,7 +106,7 @@ def split_document(db, doc: m.Document) -> list[int]:
                 pdf = office_to_pdf(data, fo.filename)
                 fo.rendition_key = storage().put(f"renditions/{fo.id}.pdf", pdf)
             # scanned pages are rendered later by their own page job (in parallel, one bitmap at a time)
-            for pg in pdf_page_kinds(pdf):
+            for pg in pdf_page_kinds(pdf, digital=kind == "office"):
                 page_ids.append(_new_page(db, fo, pg["index"], pg["kind"], None, False).id)
     doc.file_type = kinds.pop() if len(kinds) == 1 else "mixed"
     v = m.DocumentVersion(document_id=doc.id, number=1, page_ids=page_ids, note="ingest")
@@ -206,7 +206,16 @@ def _process_text_page(db, page: m.Page, run: PageRun) -> None:
     text, words = pdf_page_words(pdf, page.source_index, 150)
     for s in ("quality", "acceptance", "crop", "orientation", "dewarp", "deskew", "cleanup"):
         run.record(s, "skipped", None, reason="born_digital_page")
-    run.record("ocr", "done", "high", "pdf_text_layer", words=len(words))
+    # the text layer has no text of the pictures on the page (a pasted scan, a screenshot, a photo of a
+    # document): only those pictures are OCRed, the page itself is not
+    img_text, img_words, info = _ocr_page_images(pdf, page.source_index, 150, run.recipe["ocr"]["langs"])
+    if img_text:
+        text = (text.rstrip() + "\n\n" + img_text) if text.strip() else img_text
+        words = words + img_words
+        tier = "high" if info["mean_conf"] >= 80 else "medium"
+        run.record("ocr", "done", tier, "pdf_text_layer+image_ocr", words=len(words), **info)
+    else:
+        run.record("ocr", "done", "high", "pdf_text_layer", words=len(words), images=info["images"])
     run.record("layout", "skipped", None, reason="phase2")
     run.record("consistency", "skipped", None)
     lang, _ = O.detect_language(text)
@@ -219,6 +228,63 @@ def _process_text_page(db, page: m.Page, run: PageRun) -> None:
     _store_outputs(page, img, buf.getvalue(), {"words": words, "blocks": [], "width": img.shape[1],
                                               "height": img.shape[0]}, text, lang, ".jpg")
     run.record("outputs", "done", "high")
+
+
+def _ocr_page_images(pdf: bytes, index: int, dpi: int, langs: str) -> tuple[str, list[dict], dict]:
+    """OCR of the pictures on a born-digital page: (their text, their words with boxes in page pixels at `dpi`,
+    info). A picture whose OCR finds no real words (a photo, a chart, a logo) adds nothing."""
+    s = dpi / 72
+    texts, words, used, confs, turned = [], [], 0, [], 0
+    images = pdf_page_images(pdf, index)
+    for i, (img, (left, top, right, bottom)) in enumerate(images):
+        h, w = img.shape[:2]
+        up = min(2.0, 1600 / max(h, w))  # small pictures enlarged: Tesseract wants letters ~20 px high
+        if up > 1.05:
+            img = cv2.resize(img, (int(w * up), int(h * up)), interpolation=cv2.INTER_CUBIC)
+            h, w = img.shape[:2]
+        res, angle = _ocr_image(img, langs), 0
+        if res["mean_conf"] < 70 or res["real_words"] < 3:
+            # read badly: maybe the picture is sideways or upside down (a scan pasted as it came)
+            o = O.osd(img)
+            if o and o["rotate"] and o["orientation_conf"] >= 1.5:
+                res2 = _ocr_image(C.rotate90(img, o["rotate"]), langs)
+                if res2["real_words"] > res["real_words"]:
+                    res, angle = res2, o["rotate"]
+                    turned += 1
+        if res["real_words"] < 2:  # nothing readable: a photo, a chart, a logo (a stamp has 2-3 words)
+            continue
+        used += 1
+        fx, fy = (right - left) / w, (bottom - top) / h  # picture pixels -> points on the page
+        for x in res["words"]:
+            bx, by, bw, bh = _unrotate_box(x["box"], angle, w, h)
+            words.append({**x, "block": 1000 * (i + 1) + x["block"],  # apart from the text layer's lines
+                          "box": [int((left + bx * fx) * s), int((top + by * fy) * s),
+                                  int(bw * fx * s), int(bh * fy * s)]})
+            if x["conf"] >= 0:
+                confs.append(x["conf"])
+        texts.append(O.words_to_text(res["words"]))
+    mean_conf = round(sum(confs) / len(confs), 1) if confs else 0.0
+    return "\n\n".join(texts), words, {"images": len(images), "images_with_text": used, "images_turned": turned,
+                                        "n_words": len(words), "mean_conf": mean_conf}
+
+
+def _ocr_image(img: np.ndarray, langs: str) -> dict:
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "img.png")
+        cv2.imwrite(path, img)
+        return O.ocr(path, langs, 300, want_pdf=False)
+
+
+def _unrotate_box(box: list, angle_cw: int, w: int, h: int) -> list:
+    """A word box found on the picture turned by `angle_cw` (C.rotate90), back on the picture as it is (w x h)."""
+    x, y, bw, bh = box
+    if angle_cw == 90:
+        return [y, h - x - bw, bh, bw]
+    if angle_cw == 180:
+        return [w - x - bw, h - y - bh, bw, bh]
+    if angle_cw == 270:
+        return [w - y - bh, x, bh, bw]
+    return box
 
 
 def _process_plain_text_page(page: m.Page, run: PageRun) -> None:
