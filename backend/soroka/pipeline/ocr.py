@@ -198,7 +198,8 @@ def quick_ocr_score(img: np.ndarray, langs: str, max_side: int = 1600) -> dict:
         p = os.path.join(d, "q.png")
         cv2.imwrite(p, small)
         res = ocr(p, langs, 200, want_pdf=False, psm=3)
-    long_words = [x for x in res["words"] if len(x["text"]) >= 4 and x["conf"] >= 50]
+    # words of 3+ letters: a page of one short line ("АКТ № 5") has no longer ones to tell sideways reading by
+    long_words = [x for x in res["words"] if len(x["text"].strip(_EDGE_PUNCT)) >= 3 and x["conf"] >= 50]
     vertical = sum(x["box"][3] > x["box"][2] for x in long_words) / len(long_words) if long_words else 0.0
     base = res["valid_ratio"] * 0.7 + res["mean_conf"] / 100 * 0.3
     return {"mean_conf": res["mean_conf"], "valid_ratio": res["valid_ratio"], "n_words": res["n_words"],
