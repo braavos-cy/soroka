@@ -19,6 +19,7 @@ fi
 
 echo "deploying $(git log -1 --format='%h %s' "$target")"
 git reset -q --hard "$target"
+backend/models/ensure.sh   # page models image, built only when missing (keeps torch out of every build)
 docker compose up -d --build --remove-orphans
 echo "$target" > "$STATE"
 docker image prune -f >/dev/null

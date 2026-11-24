@@ -20,4 +20,5 @@ port=$(grep -E '^DEV_PORT=' .env | cut -d= -f2 || true)
 ip=$(curl -s -m 3 https://ifconfig.me || hostname -I | awk '{print $1}')
 echo ">> Dev server: http://${ip}:${port:-5173}   (Ctrl+C to stop)"
 
+DOCKER="$DOCKER" backend/models/ensure.sh
 exec $DOCKER compose -p soroka-dev -f docker-compose.yml -f docker-compose.dev.yml up --build --remove-orphans

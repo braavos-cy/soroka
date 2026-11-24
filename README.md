@@ -44,6 +44,7 @@ deploy/install.sh                         # Docker, auto-deploy timer, daily bac
 
 ```sh
 cp .env.example .env        # change every secret!
+backend/models/ensure.sh    # once: builds the page-models image (downloads torch, takes a while)
 docker compose up -d --build
 # optional malware scanning: set CLAMAV_HOST=clamav in .env, then
 docker compose --profile security up -d
