@@ -21,6 +21,7 @@ LAT2CYR = str.maketrans("aeopcxyAEOPCXBKMHT", "аеорсхуАЕОРСХВКМ�
 CYR2LAT = str.maketrans("аеорсхуАЕОРСХВКМНТ", "aeopcxyAEOPCXBKMHT")
 LAT_LOOK = set("aeopcxyAEOPCXBKMHT")
 CYR_LOOK = set("аеорсхуАЕОРСХВКМНТ")
+_EDGE_PUNCT = ".,;:!?«»\"'()[]{}—–-…“”„"
 
 
 def _run(args: list[str], timeout: int = 600) -> subprocess.CompletedProcess:
@@ -98,9 +99,17 @@ def ocr(image_path: str, langs: str, dpi: int, want_pdf: bool = True, psm: int =
 def score_words(words: list[dict]) -> dict:
     confs = [w["conf"] for w in words if w["conf"] >= 0]
     mean_conf = float(np.mean(confs)) if confs else 0.0
-    alpha = [w for w in words if len(w["text"]) >= 3 and w["text"].isalpha()]
-    tokens = [w for w in words if len(w["text"]) >= 3]
-    plausible = [w for w in alpha if w["conf"] >= 70 and not (CYR.search(w["text"]) and LAT.search(w["text"]))]
+    # share of the word-like tokens that read as real words. Only tokens with letters count: numbers, prices and
+    # dot leaders ("321,00", "........", a receipt is full of them) are no sign of garbled text; punctuation around
+    # a word («ПРОДУКТЫ», "покупку!") does not make it less of a word
+    tokens, plausible = [], []
+    for w in words:
+        core = w["text"].strip(_EDGE_PUNCT)
+        if len(core) < 3 or not any(c.isalpha() for c in core):
+            continue
+        tokens.append(w)
+        if core.replace("-", "").isalpha() and w["conf"] >= 70 and not (CYR.search(core) and LAT.search(core)):
+            plausible.append(w)
     valid_ratio = len(plausible) / len(tokens) if tokens else 0.0
     return {"mean_conf": round(mean_conf, 1), "valid_ratio": round(valid_ratio, 3), "n_words": len(words),
             "real_words": real_words(words)}
