@@ -12,6 +12,7 @@ import { Combo, Select, useDialog } from '../components/ui'
 import { ArchiveRestore, ArrowDownWideNarrow, ArrowUpNarrowWide, Ban, Files, Download, LayoutGrid, List, Pause, Play, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
 
 const PAGE = 60
+const AUTO_MAX = 200 // documents loaded by scrolling alone; beyond that the Load more button
 
 // sort: a field from the dropdown plus a direction (the arrow button); choosing a field starts in its natural direction
 const SORT_FIELDS = ['received', 'date', 'title', 'size', 'pages'] as const
@@ -211,6 +212,26 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   /** reload everything loaded so far, in one request */
   const load = useCallback(() => fetchList(0, Math.max(PAGE, itemsRef.current.length)), [fetchList])
   const loadMore = () => fetchList(itemsRef.current.length, PAGE)
+  // scrolling near the end loads the next documents by itself, up to AUTO_MAX on the page; from there on (or when an
+  // automatic load brought nothing new) the Load more button does it, so the page does not grow without end
+  const moreRef = useRef<HTMLDivElement>(null)
+  const autoAt = useRef(-1) // list length the last automatic load started from: never twice from the same one
+  useEffect(() => { autoAt.current = -1 }, [fetchList]) // a new search or filter: a new list
+  const moreNow = useRef({ loading, more: loadMore })
+  moreNow.current = { loading, more: loadMore }
+  const autoOn = items.length < AUTO_MAX && autoAt.current !== items.length
+  const showMoreBtn = !autoOn && !(loading && autoAt.current === items.length)
+  useEffect(() => {
+    const el = moreRef.current, root = el?.closest('.content')
+    if (!el || !root || !autoOn) return
+    const io = new IntersectionObserver((es) => {
+      if (!es.some((e) => e.isIntersecting) || moreNow.current.loading || autoAt.current === itemsRef.current.length) return
+      autoAt.current = itemsRef.current.length
+      moreNow.current.more()
+    }, { root, rootMargin: '0px 0px 800px 0px' }) // starts about a screen before the end is reached
+    io.observe(el)
+    return () => io.disconnect()
+  }, [autoOn, loading, items.length < total])
   // arriving from a document ("Show in folders"): scroll to it and flash it once; load further pages until it is found
   const loc = useLocation()
   const hl: number | undefined = (loc.state as any)?.highlight
@@ -562,7 +583,8 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           </tbody>
         </table>
       )}
-      {!upFilter && items.length < total && <div style={{ textAlign: 'center', padding: 16 }}><button disabled={loading} onClick={loadMore}>{t('load_more')}</button></div>}
+      {!upFilter && items.length < total && <div ref={moreRef} style={{ textAlign: 'center', padding: 16 }}>
+        {showMoreBtn ? <button disabled={loading} onClick={loadMore}>{t('load_more')}</button> : loading && <span className="muted small">{t('loading')}</span>}</div>}
       </div>
       {upload && <UploadModal folderId={folderId} onClose={() => setUpload(false)} />}
     </div>
