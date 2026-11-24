@@ -614,3 +614,8 @@ td.nowrap { white-space: nowrap; }
   .tb-title { flex: 0 1 auto; }
 }
 @media (max-width: 900px) { .viewer.single { grid-template-columns: 1fr; } }
+/* document list: toolbar + filter panel pinned together at the top of the scrolling area */
+.list-head { position: sticky; top: 0; z-index: 5; }
+.list-head .toolbar { position: static; }
+/* phones: only the toolbar stays (as before), a tall filter panel would cover the list */
+@media (max-width: 800px) { .list-head { display: contents; } .list-head .toolbar { position: sticky; } }

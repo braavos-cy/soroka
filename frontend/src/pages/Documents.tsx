@@ -532,6 +532,8 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const card = (d: DocSummary) => <DocCard key={d.id} d={d} selected={sel.has(d.id)} view={view} acts={acts} />
   return (
     <div className={sel.size + upSel.size > 0 ? 'has-selection' : undefined} {...fileDrop}>
+      {/* the toolbar and the filter panel stay at the top while the list scrolls under them */}
+      <div className="list-head">
       {/* while documents are selected the selection actions replace the regular toolbar (same place, same height) */}
       <div className={'toolbar' + (sel.size + upSel.size > 0 ? ' selecting' : '')}>
         {sel.size + upSel.size > 0 ? <>
@@ -619,6 +621,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           {activeFilters > 0 && <button className="link reset-filters" onClick={resetFilters}><X size={14} /> {t('reset_filters')}</button>}
         </div>
       )}
+      </div>
       <div ref={area} className="results" onMouseDown={startBand}>
       {band && <div className="band" style={{ left: band.x, top: band.y, width: band.w, height: band.h }} />}
       {fileOver && (
