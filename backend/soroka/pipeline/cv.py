@@ -50,13 +50,14 @@ def quality(img: np.ndarray, page: np.ndarray | None = None) -> dict:
         flags.append("dark")
     if glare >= GLARE_MIN:
         flags.append("glare")
-    if min(h, w) < 900:
+    if min(h, w) < LOW_RES_MIN:
         flags.append("low_resolution")
     tier = "high" if not flags else ("medium" if len(flags) == 1 else "low")
     return {"blur": round(blur, 1), "brightness": round(mean, 1), "glare": round(glare, 4), "glare_spots": spots,
             "dark": round(dark, 4), "width": w, "height": h, "flags": flags, "tier": tier}
 
 
+LOW_RES_MIN = 300  # px on the short side; below it small text may be unreadable (a narrow receipt is fine at 600)
 GLARE_MIN = 0.002  # share of the page covered by glare spots that is worth a warning
 GLARE_SAT = 245  # blown out
 GLARE_SPOT_MIN = 0.0015  # smaller bright specks are ignored
