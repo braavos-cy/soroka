@@ -230,6 +230,12 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     setTimeout(() => el.classList.remove('flash'), 1600)
   }, [hl, loc.key, items, total, loading, layout])
   useEffect(() => { setSel(new Set()); setUpSel(new Set()) }, [params, view])
+  // a selected document that left the list (dropped on Trash or into another folder, deleted in another tab) is no
+  // longer selected: the selection bar and its actions must not act on documents that are not shown
+  useEffect(() => {
+    const have = new Set(items.map((d) => d.id))
+    setSel((cur) => { const next = new Set([...cur].filter((id) => have.has(id))); return next.size === cur.size ? cur : next })
+  }, [items])
   // something changed (an upload, a processing step, another user's edit): the store's status check notices within 5 s
   // and tells every open page; that also covers documents being processed, so the list has no poll of its own
   useEffect(() => {
