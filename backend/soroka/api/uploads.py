@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from ..config import settings
@@ -94,9 +95,13 @@ async def put_chunk(upload_id: str, offset: int, request: Request, p: Principal 
         raise HTTPException(409, {"code": "offset_mismatch", "received": have})
     if have + len(data) > meta["size"]:
         raise HTTPException(400, "more_than_announced")
+    await run_in_threadpool(_append, part, data)  # disk write off the event loop (workers keep the disk busy)
+    return {"received": have + len(data), "size": meta["size"]}
+
+
+def _append(part: Path, data: bytes) -> None:
     with open(part, "ab") as f:
         f.write(data)
-    return {"received": have + len(data), "size": meta["size"]}
 
 
 @router.delete("/{upload_id}")

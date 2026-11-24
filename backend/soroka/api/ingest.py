@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DB
 
@@ -47,6 +48,14 @@ async def ingest_files(request: Request, files: list[UploadFile] | None = File(N
     except (json.JSONDecodeError, TypeError):
         raise HTTPException(400, "bad_upload_ids")
     in_files = [InFile(f.filename or "file", await f.read()) for f in (files or [])]
+    # reading the uploaded files, hashing and storing them and the database work block: in a thread, so the API
+    # keeps answering everyone else meanwhile (in the event loop a 100 MB upload froze every page for seconds,
+    # far longer when the workers keep the disk busy)
+    return await run_in_threadpool(_ingest_sync, request, p, db, md, ids, in_files)
+
+
+def _ingest_sync(request: Request, p: Principal, db: DB, md: IngestMeta, ids: list[str],
+                 in_files: list[InFile]) -> dict:
     in_files += [InFile(*uploads.take(u, p)) for u in ids]
     if not in_files:
         raise HTTPException(400, "no_files")
