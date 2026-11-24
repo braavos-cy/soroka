@@ -34,8 +34,23 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
+AUDIT_TARGET_MAX = 200  # audit_log.target column size
+
+
 def audit(db: DB, principal: "Principal | None", action: str, target: str = "", ip: str = "", **details) -> None:
-    db.add(m.AuditLog(user_id=principal.user_id if principal else None, action=action, target=str(target),
+    target = str(target)
+    if len(target) > AUDIT_TARGET_MAX:
+        # e.g. hundreds of document ids trashed at once: the column shows the start and how many more, the
+        # entry's details keep the whole list (it used to fail the request: value too long for the column)
+        parts = target.split(",")
+        head, shown = "", 0
+        for x in parts:
+            if len(head) + len(x) + 1 > AUDIT_TARGET_MAX - 12:
+                break
+            head, shown = (head + "," + x) if head else x, shown + 1
+        details = {**details, "targets": parts}
+        target = f"{head},… (+{len(parts) - shown})" if shown else target[:AUDIT_TARGET_MAX - 1] + "…"
+    db.add(m.AuditLog(user_id=principal.user_id if principal else None, action=action, target=target,
                       details=details, ip=ip))
 
 
