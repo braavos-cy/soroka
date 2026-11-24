@@ -376,6 +376,33 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     (upFilter === 'uploading' ? ['queued', 'uploading', 'saving'].includes(u.state)
       : upFilter === 'paused' ? u.state === 'paused' : upFilter === 'failed' ? u.state === 'error' : true))
   const docsShown = upFilter ? [] : items  // the upload filters show uploads only
+  // everything the list shows (documents loaded so far and the uploads in it): the "Select all" link and Ctrl+A
+  const selectAll = () => { setSel(new Set(docsShown.map((d) => d.id))); setUpSel(new Set(upVisible.map((u) => u.id))) }
+  const selectAllNow = useRef(selectAll)
+  selectAllNow.current = selectAll
+  const selCount = useRef(0)
+  selCount.current = sel.size + upSel.size
+  // Ctrl+A selects everything shown; Esc clears the selection. Registered when the list opens, so before the
+  // filter panel's Esc: with something selected, Esc only clears the selection (marked handled, so neither the
+  // panel nor the page-wide search Esc acts on the same press); the next Esc closes the filters / ends the search
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || document.querySelector('.modal-bg')) return
+      const el = document.activeElement as HTMLElement | null
+      if (el?.matches('input, textarea, select, [contenteditable="true"]')) return // a field keeps its own keys
+      if (e.key === 'Escape' && selCount.current > 0) {
+        e.preventDefault()
+        setSel(new Set()); setUpSel(new Set())
+        return
+      }
+      // e.code: the A key in any keyboard layout (Ф on the Russian one)
+      if (!(e.ctrlKey || e.metaKey) || e.code !== 'KeyA' || e.altKey || e.shiftKey) return
+      e.preventDefault() // not the browser's select-all of the page text
+      selectAllNow.current()
+    }
+    document.addEventListener('keydown', h)
+    return () => document.removeEventListener('keydown', h)
+  }, [])
   const cancelUploads = async (ids: string[]) => {
     const n = ids.length
     if (!n || !(await dlg.confirm({ title: n === 1 ? t('up_cancel_q') : `${t('up_cancel_many_q')} (${n})`,
@@ -510,7 +537,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
         {sel.size + upSel.size > 0 ? <>
         <b>{sel.size + upSel.size} {t('selected')}</b>
         <span className="spacer" />
-        <button className="link" onClick={() => { setSel(new Set(docsShown.map((d) => d.id))); setUpSel(new Set(upVisible.map((u) => u.id))) }}>{t('select_all')}</button>
+        <button className="link" onClick={selectAll} title="Ctrl+A">{t('select_all')}</button>
         <button className="link" onClick={() => { setSel(new Set()); setUpSel(new Set()) }}><X size={14} /> {t('clear_selection')}</button>
         {/* desktop: on the right of the bar; phone: a bottom action bar in place of the tab bar */}
         <div className="sel-actions">
