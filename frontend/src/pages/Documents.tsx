@@ -375,6 +375,22 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const selecting = sel.size + upSel.size > 0
   const activeFilters = FILTER_GROUPS.filter((g) => g.some((k) => params.get(k))).length
   const resetFilters = () => { const p = new URLSearchParams(params); FILTER_GROUPS.flat().forEach((k) => p.delete(k)); setParams(p) }
+  // closing the filter panel (its button again, or Esc) also clears the filters it set
+  const closeFilters = () => { setShowFilters(false); if (activeFilters) resetFilters() }
+  const closeNow = useRef(closeFilters)
+  closeNow.current = closeFilters
+  useEffect(() => {
+    if (!showFilters) return
+    // on document: a dropdown open in the panel takes Esc first (it stops it there) and only closes itself; marked
+    // handled so the page-wide Esc (App: ends a search) does not act on the same press
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.modal-bg')) return
+      e.preventDefault()
+      closeNow.current()
+    }
+    document.addEventListener('keydown', h)
+    return () => document.removeEventListener('keydown', h)
+  }, [showFilters])
   const unfiled = params.get('folder') === 'none' // "Not in folders"; uploads from here go to no folder (folderId null)
   const folderId = params.get('folder') && !unfiled ? Number(params.get('folder')) : null
   const heading = view === 'trash' ? t('trash') : view === 'rejected' ? t('rejected') : folderId ? folderPath(folders, folderId) : unfiled ? t('not_in_folders') : t('all_documents')
@@ -483,7 +499,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           {upVisible.length > 0 && <button className="link small" onClick={() => setParam('upload', upFilter ? '' : 'uploading')}>· {upVisible.length} {t('up_count')}</button>}
         </div>
         <span className="spacer" />
-        {view === 'active' && <button onClick={() => setShowFilters(!showFilters)} className={showFilters || activeFilters ? 'active' : ''}>
+        {view === 'active' && <button onClick={() => (showFilters ? closeFilters() : setShowFilters(true))} className={showFilters || activeFilters ? 'active' : ''}>
           <SlidersHorizontal size={15} /> {t('filters')}{activeFilters > 0 && <span className="count">{activeFilters}</span>}</button>}
         {total > 0 && (() => {
           // sort = "<field>_<asc|desc>"; none = newest received first
