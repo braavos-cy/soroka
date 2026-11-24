@@ -14,6 +14,10 @@ import { ArchiveRestore, ArrowDownWideNarrow, ArrowUpNarrowWide, Ban, Files, Dow
 const PAGE = 60
 const AUTO_MAX = 200 // documents loaded by scrolling alone; beyond that the Load more button
 
+// per history entry (location.key): how many documents the list had loaded and how far it was scrolled when it
+// was left, so going back to it returns to the same place
+const listPlaces = new Map<string, { n: number; top: number }>()
+
 // sort: a field from the dropdown plus a direction (the arrow button); choosing a field starts in its natural direction
 const SORT_FIELDS = ['received', 'date', 'title', 'size', 'pages'] as const
 type SortField = typeof SORT_FIELDS[number]
@@ -143,6 +147,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const dlg = useDialog()
   const [params, setParams] = useSearchParams()
   const nav = useNavigate()
+  const loc = useLocation()
   const [items, setItems] = useState<DocSummary[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -208,7 +213,40 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     })
       .catch((e) => { if (seq === loadSeq.current) toast(e.detail) }).finally(() => { if (seq === loadSeq.current) setLoading(false) })
   }, [query])
-  useEffect(() => { fetchList(0, PAGE) }, [fetchList])
+  // back from a document (or any page opened from here): the list as it was left, with as many documents loaded
+  // ("Load more") and scrolled to the same place; `place` is what was saved for this history entry
+  const place = useRef(listPlaces.get(loc.key))
+  const restoreTop = useRef(place.current?.top)
+  const firstFetch = useRef(fetchList)
+  useEffect(() => {
+    // only for the list as it was opened: a new search or filter starts from the top as before
+    const n = fetchList === firstFetch.current ? place.current?.n : undefined
+    fetchList(0, Math.max(PAGE, n || 0))
+  }, [fetchList])
+  useLayoutEffect(() => {
+    const scroller = area.current?.closest('.content')
+    if (restoreTop.current == null || !items.length || !scroller) return
+    scroller.scrollTop = restoreTop.current
+    restoreTop.current = undefined
+  }, [items])
+  const locKey = useRef(loc.key)
+  locKey.current = loc.key
+  useLayoutEffect(() => {  // layout: saved before the document view replaces the list and resets the scroll
+    const scroller = area.current?.closest('.content')
+    if (!scroller) return
+    let top = scroller.scrollTop
+    const onScroll = () => { top = scroller.scrollTop }
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      scroller.removeEventListener('scroll', onScroll)
+      // saved when the list is left (the document view replaces it): its history entry remembers the place
+      if (itemsRef.current.length) {
+        listPlaces.delete(locKey.current)
+        listPlaces.set(locKey.current, { n: itemsRef.current.length, top })
+        if (listPlaces.size > 50) listPlaces.delete(listPlaces.keys().next().value!)
+      }
+    }
+  }, [])
   /** reload everything loaded so far, in one request */
   const load = useCallback(() => fetchList(0, Math.max(PAGE, itemsRef.current.length)), [fetchList])
   const loadMore = () => fetchList(itemsRef.current.length, PAGE)
@@ -233,7 +271,6 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     return () => io.disconnect()
   }, [autoOn, loading, items.length < total])
   // arriving from a document ("Show in folders"): scroll to it and flash it once; load further pages until it is found
-  const loc = useLocation()
   const hl: number | undefined = (loc.state as any)?.highlight
   const hlDone = useRef('')
   useEffect(() => {
