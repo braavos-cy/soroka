@@ -178,14 +178,22 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
 
   const itemsRef = useRef(items)
   itemsRef.current = items
-  const loadSeq = useRef(0) // search-as-you-type: an answer to an older query must not replace a newer one
+  const loadSeq = useRef(0) // numbers the requests
+  const appliedSeq = useRef(0) // the newest answer on screen: an older one arriving later must not replace it
+  const curQuery = useRef('') // search-as-you-type: an answer to a query no longer asked is dropped
   const shown = useRef<string | null>(null) // the text of the answer on screen (offset 0)
   /** offset 0: (re)load the first n documents in place of the list; offset > 0: add the next n ("Load more") */
   const fetchList = useCallback((offset: number, n: number) => {
     const seq = ++loadSeq.current
+    const q = query()
+    curQuery.current = q
     setLoading(true)
-    api(`/api/documents?${query()}&offset=${offset}&limit=${n}`, { raw: true }).then((res: Response) => res.text()).then((text) => {
-      if (seq !== loadSeq.current) return
+    api(`/api/documents?${q}&offset=${offset}&limit=${n}`, { raw: true }).then((res: Response) => res.text()).then((text) => {
+      // an answer to the same query is shown even when newer reloads are on their way: many uploads finishing one
+      // after another each ask for a reload, and dropping all but the last kept every saved upload waiting for the
+      // last one (each list request outlasted the gap to the next save)
+      if (q !== curQuery.current || seq < appliedSeq.current) return
+      appliedSeq.current = seq
       // same answer as what is on screen (next letter of the same word, background refresh): leave the list alone
       if (offset === 0) { if (text === shown.current) return; shown.current = text } else shown.current = null
       const r = JSON.parse(text)
