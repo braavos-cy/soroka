@@ -185,7 +185,7 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .dh-row:has(.title-box.editing) > :not(.title-box) { opacity: .4; transition: opacity .12s; }
 .ctx-msg { padding: 6px 8px; border-radius: 4px; background: var(--panel2); font-size: 13px; }
 .ctx-msg .who { font-size: 11px; color: var(--muted); }
-.pre { white-space: pre-wrap; font-size: 13px; line-height: 1.45; background: var(--panel2); padding: 10px; border-radius: 5px; max-height: 50vh; overflow: auto; }
+.pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; background: var(--panel2); padding: 10px; border-radius: 5px; max-height: 50vh; overflow: auto; }
 .magnifier { position: fixed; width: 140px; height: 140px; border-radius: 50%; border: 2px solid var(--accent); pointer-events: none; background-repeat: no-repeat; box-shadow: var(--shadow); z-index: 400; }
 
 /* modal */
