@@ -96,15 +96,45 @@ def ocr(image_path: str, langs: str, dpi: int, want_pdf: bool = True, psm: int =
     return {"words": words, "blocks": list(blocks.values()), "pdf": pdf, **score_words(words)}
 
 
+# well-formed tokens that are not words: dates, times, phone numbers, e-mails, web addresses, amounts with a currency,
+# numbers with a unit or an ordinal ending. Read wrongly (garbled or upside-down text) they lose their shape.
+_UNITS = (r"г|гг|руб|р|коп|тыс|млн|млрд|шт|кг|гр|мг|т|км|м|см|мм|л|мл|га|кв|ч|мин|сек|с|"
+          r"st|nd|rd|th|kg|g|mg|km|m|cm|mm|l|ml|pcs|h|min|sec|usd|eur|rub")
+STRUCTURED = re.compile("|".join([
+    r"\d{1,2}[./-]\d{1,2}[./-](?:\d{4}|\d{2})(?:г|г\.)?",          # 12.03.2026, 01/02/24, 12.03.2026г
+    r"\d{4}-\d{1,2}-\d{1,2}",                                       # 2026-03-12
+    r"\d{1,2}:\d{2}(?::\d{2})?",                                    # 10:30, 10:30:15
+    r"\+\d{10,14}",                                                 # +79559656112
+    r"\+?\d{0,3}\(?\d{2,5}\)?\d{0,4}(?:-\d{2,4}){1,3}",             # 965-61-12, (495)123-45-67, 8(999)123-45-67
+    r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+",                                # e-mail
+    r"(?:https?://|www\.)\S+",                                      # web address
+    r"[\w-]+(?:\.[\w-]+)*\.(?:ru|com|org|net|рф|su|io|by|kz|ua|de|uk|info|biz)(?:/\S*)?",
+    r"[$€₽£]\d[\d.,]*|\d[\d.,]*[$€₽£]",                             # $45.00, 45,00₽
+    r"\d+(?:[.,]\d+)?(?:%|‰|°[CС]?)",                               # 15%, 36,6°C
+    rf"\d+(?:[.,]\d+)?(?:{_UNITS})\.?",                             # 2026г., 5кг, 3pcs, 1st
+    r"\d+-(?:й|я|е|го|му|ми|х|ое|ый|ий|ая|ые|ых)",                  # 2-й, 10-го
+]), re.I)
+
+
+def structured(core: str) -> bool:
+    return bool(STRUCTURED.fullmatch(core))
+
+
 def score_words(words: list[dict]) -> dict:
     confs = [w["conf"] for w in words if w["conf"] >= 0]
     mean_conf = float(np.mean(confs)) if confs else 0.0
-    # share of the word-like tokens that read as real words. Only tokens with letters count: numbers, prices and
-    # dot leaders ("321,00", "........", a receipt is full of them) are no sign of garbled text; punctuation around
-    # a word («ПРОДУКТЫ», "покупку!") does not make it less of a word
+    # share of the word-like tokens that read as real words. Plain numbers, prices and dot leaders ("321,00",
+    # "........", a receipt is full of them) are left out: they are no sign of garbled text either way. Well-formed
+    # dates, phone numbers, e-mails etc. count as read correctly (a page of only dates and phone numbers is not
+    # garbled). Punctuation around a word («ПРОДУКТЫ», "покупку!") does not make it less of a word
     tokens, plausible = [], []
     for w in words:
         core = w["text"].strip(_EDGE_PUNCT)
+        if len(core) >= 3 and structured(core):
+            tokens.append(w)
+            if w["conf"] >= 70:
+                plausible.append(w)
+            continue
         if len(core) < 3 or not any(c.isalpha() for c in core):
             continue
         tokens.append(w)
