@@ -350,6 +350,85 @@ a box prompt from the agreed corners.
 Scripts (scratchpad, not in the repo): `exp.py` (paths + features), `masks.py` / `realeval.py` / `sidefit.py`
 (consensus), `qm.py`, `analyze4.py`.
 
+### Follow-up: area first, then the regular 4-corner crop inside it
+
+Idea: take the MobileSAM outline as the region (optionally grown a little), run the normal 4-corner detector only
+inside it, and warp to that quad. Two ways to restrict the detector were tried, each with the outline grown by
+0 / 1 / 3% of its diagonal:
+- **select**: the detector's candidates on the unchanged photo; the best-scoring one lying ≥ 97% inside the grown
+  outline and covering ≥ 85% of it; none → the outline's own 4 corners (refined), i.e. path QM.
+- **paint**: everything outside the grown outline painted with the background colour found just outside it, then
+  detector + refine on that image (full frame not allowed).
+Plus a guard against quads that cut the page diagonally when the page fills the photo (the "inside" test is then
+almost free): the inner quad must overlap the outline (IoU ≥ 0.9), else QM. OCR-scored at 1% growth with the select
+method: S (no flattening), SF (+ flattening), and QMF (outline corners + flattening) for reference.
+
+**Synthetic (IoU with the true page, 23 normal / 22 hard photos that get an outline):**
+
+| crop | normal | hard (mean / min) |
+|---|---|---|
+| Q (detector, production) | 0.983 | 0.904 / 0.001 |
+| QM (outline corners) | 0.966 | 0.955 / 0.906 |
+| select, outline +0% | 0.982 | 0.969 / 0.911 |
+| **select, outline +1%** | **0.983** | **0.976 / 0.911** |
+| select, outline +3% | 0.983 | 0.975 / 0.898 |
+| paint +0 / +1 / +3% | 0.980 / 0.986 / 0.983 | 0.948 / 0.934 / 0.970 (min 0.37–0.59) |
+| paint +1%, guarded | 0.986 | 0.976 / 0.912 |
+
+As a 4-corner crop, area-first is the best one: it keeps the detector's precision where the detector is right and
+never takes the whole frame or the facing page. Growing the area helps a little (+0% leaves 48 / 96 real pages with
+no candidate inside, +1% 35, +3% 26); 1% and 3% are equal. Paint is erratic unguarded: when the outline touches the
+frame there is no background left, and the detector latches onto the text block.
+
+**Real pages (96, gated confident words):** the S quad came from the detector's chosen quad on 29 pages, from another
+detector candidate inside the area on 11, and from the outline corners on 56.
+
+| path | total | vs |
+|---|---|---|
+| Q (detector) | 7657 | |
+| QM (outline corners) | 11315 | |
+| **S (area-first quad)** | **11519** | vs Q 38 better / 10 worse; vs QM 15 / 4 |
+| M (outline + flattening, current) | 12581 | S vs M 15 better / 45 worse |
+| SF (area-first quad + flattening) | 8166 | vs M 2 / 84 |
+| QMF (outline corners + flattening) | 7902 | vs M 2 / 84 |
+
+Rules, share of the per-page best of all 10 paths [95% CI] (this oracle has more paths than the one above, so the
+shares are lower):
+
+| rule | total | share | vs branch rule |
+|---|---|---|---|
+| production (bend) | 11429 | 0.848 [0.78–0.91] | −1183 |
+| **branch `crop-choice-agreement`** | **12612** | **0.936 [0.91–0.96]** | — |
+| always outline + flattening | 12581 | 0.934 | −31 [−229..+110] |
+| branch rule with S in place of Q | 12568 | 0.933 | −44 [−122..+26] (+2 / −4 pages) |
+| S if straight (bend < 0.018), else outline + flattening | 12341 | 0.916 | −271 [−578..−34] |
+| S always | 11519 | 0.855 | −1093 |
+| SF always | 8166 | 0.606 | −4446 |
+
+A relative guard (accept the inner quad if its overlap with the outline is within 0.02 of the outline corners' own
+overlap; even the outline's own corners overlap a bent outline only 0.84–0.9) changes 12 pages both ways, net +1
+word.
+
+**Why it does not win on real pages:**
+1. Most real pages are bent (74 of 96 have bend ≥ 0.018), so the crop has to be followed by flattening, and the
+   flattening model needs the masked outline crop as input: flattening a perspective-warped quad crop loses a third
+   of the words (SF 8166, QMF 7902, QF 9259 vs M 12581; 84 of 96 pages worse). So the better quad only matters on
+   flat pages.
+2. Even on the 22 flat-ish pages (bend < 0.018) the outline crop with flattening reads slightly more (3832 vs S
+   3592; Q 2680): the flattening also corrects the residual perspective and shading.
+3. Where the area-first quad is a different candidate from the detector's own choice (11 pages), it beats Q
+   (1611 vs 1098) and QM (1499) and ties M (1585). That is exactly the case the branch rule already sends to the
+   outline.
+
+**Answer: not adopted.** Area-first is the best *4-corner* crop measured (synthetic hard set 0.976 vs 0.904 for the
+detector), and if a no-flattening mode is ever needed (e.g. a "fast" setting, or flattening switched off by the
+user), it is the crop to use: outline grown 1%, detector's best candidate inside it, outline corners as the
+fallback. For the default pipeline the branch rule (detector quad when it agrees with the outline, else outline +
+flattening) stays better, because the flattening only works on the outline crop.
+
+Scripts (scratchpad): `qim.py` (variants, synthetic geometry, real quads + overlays), `qim_ocr.py`, `qim_rel.py`,
+`qim_an.py`, `analyze_qim.py`.
+
 ## Known gaps / next steps
 
 - 2/40 hard-set documents are still rejected (1/40 with branch `crop-choice-agreement`, see 2026-11-25): dark,
