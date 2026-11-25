@@ -245,10 +245,115 @@ Equal scores broken by line straightness from the OCR word boxes (median |angle|
 - **Decision: no change.** Possible follow-up (not done): for strongly curved pages, offer flattening the
   uncropped photo with the high-res model (straighter, same OCR), with a finger/background check.
 
+## 2026-11-25 — crop mode: why the outline is chosen and how to choose; several outline runs (consensus)
+
+Two questions: (1) why do some pages get the page-outline crop (MobileSAM mask + flattening) and others the
+4-corner crop, and how to choose better; (2) does running the outline several times and keeping the intersection
+(or another consensus) give a better outline?
+
+**Production data (1992 image pages in the DB).** 547 scans (no outline by design), 156 photos without an
+outline (no text block 74, no plausible mask 81, area 1), 1258 with an outline. Of these, 1070 (85%) passed
+`bend >= 0.018` and got the outline crop; 188 got the 4-corner crop. Bends of outlined pages: 2.5 / 25 / 50 / 75 /
+97.5 percentiles 0.009 / 0.026 / 0.037 / 0.052 / 0.091 — one broad distribution, no flat / curved groups for a
+threshold to separate. Neighbouring pages of
+the same upload flip mode in 135 of 1066 pairs (12.7%); 15 multi-page uploads mix both modes. Crop corrections in
+the correction log: 7 × outline → 4 corners (5 of them with hand-drawn corners, i.e. the automatic corners were
+wrong too), 2 × 4 corners → outline (one at bend 0.011, just under the threshold).
+
+**Why (answer to 1).** `outline_bend` is the *largest* distance of any outline point from the 4-corner frame. On
+real photos of the case files that maximum is set by outline noise — an index tab or the edge of the pages
+underneath, a finger notch, a dog-eared corner — not by the page's curvature (p1707: a flat page, median point
+distance 0.0001, bend 0.024 from one kink at the stack edge). So the mode is decided by noise around 0.018, and on
+a flat page it is close to a coin toss. The threshold came from synthetic flat photos (bend ≤ 0.016), which have
+no such noise.
+
+**Study set.** 96 real pages from 73 uploads, stratified by bend (22 below 0.018, 26 in 0.018–0.03, 26 in
+0.03–0.05, 22 above). Paths, each finished with orientation → deskew → cleanup and OCR'd with the production
+call: Q = 4-corner crop (detector + edge trim); QF = Q + flattening (high + shading); QM = 4-corner crop from the
+outline's corners, no flattening; M0 = outline crop, no flattening; M = outline crop + flattening (production's
+outline path); M_maj / M_inter = M with the majority / intersection outline of 10 runs. Score = confident words
+(conf ≥ 80, ≥ 3 letters); "gated" = 0 when the output is not a page (MobileSAM page fill < 0.9, as in the order
+study: the output still shows desk / facing page). "Oracle" = the better of the paths per page.
+
+- **The 4-corner detector misses the page on these photos far more often than the outline does.** On the 96
+  pages it returned the whole frame on 31, and the facing page / desk on several `paper_edges` results (outline
+  agreement ≈ 0.65). Agreement IoU(4-corner crop, outline): quartiles 0.79 / 0.89 / 0.94. Visual checks (p2003,
+  p3036, p5579, p5598, p1882): where they disagree, the outline is right and Q keeps desk strips, a sliver of the
+  page below, or the facing page.
+- Totals (gated / raw): Q 7657 / 11513, QF 9259 / 9259, QM 11315 / 11495, M0 7815 / 11346, **M 12581 / 12670**.
+  M vs Q: 64 better / 11 worse (gated), 46 / 15 (raw). Flattening + shading matters even on "flat" handheld
+  pages: QM loses to M on 49 pages, wins on 11; flattening a 4-corner crop (QF) mostly hurts, as found before.
+- Decision rules (gated words as share of the per-page best; bootstrap 95% interval; pages vs production):
+
+  | rule | share | pages below 0.9 | vs production |
+  |---|---|---|---|
+  | production: bend ≥ 0.018 → outline | 0.860 [0.80–0.92] | 24 | |
+  | always 4 corners | 0.576 | 49 | +11 / −51 |
+  | always outline + flattening | 0.946 | 15 | +13 / −0 |
+  | robust bend (smooth per-side bow) < 0.02 → corners from outline | 0.922 | 22 | +10 / −8 |
+  | text-line curvature of the 4-corner crop < 0.1 → corners from outline | 0.943 | 18 | +15 / −5 |
+  | **4 corners if agreement ≥ 0.97, or ≥ 0.95 with bend < 0.018; else outline** | **0.949 [0.92–0.97]** | 14 | **+13 / −3** |
+
+  Raw (ungated) the differences shrink (production 0.939, new rule 0.946, +5 / −4): OCR reads past desk strips,
+  so the gate is what shows the wrong crops. Higher bend thresholds only make it worse (0.03: 0.75; 0.05: 0.57).
+- On the synthetic test photos a correct flat 4-corner crop agrees with the outline at 0.952–0.99 (the outline sits
+  ~1% inside the page edge, see below), all with bend < 0.018. Agreement ≥ 0.97 alone sent
+  `doc_en_angled_letter_r90` to the outline and flattening cost it 31% recall; the "≥ 0.95 and straight" arm keeps
+  those on the exact crop.
+
+**How to choose (answer to 1).** Don't ask "is the outline bent?", ask "do the two independent crops agree?". If
+the 4-corner crop and the outline agree, the corners found the page and it is flat → exact 4-corner crop. If they
+disagree, either the corners missed (the usual case on these photos) or the page is curved; both are handled by
+the outline + flattening. Implemented on local branch **`crop-choice-agreement`** (commit `3b01958`, not merged,
+not pushed — pushing `main` deploys): `pagemodel.outline_agreement`, `AGREE_FLAT = 0.97`,
+`AGREE_FLAT_STRAIGHT = 0.95`; the crop record keeps `bend` and adds `agree`. On the 96 pages it uses the outline on
+84 (bend rule: 74; the sample over-represents low bends), and the choice no longer depends on outline noise.
+Synthetic sets with the branch: normal set identical (39/40, 16/16, crop 39/40, recall 0.973); **hard set kept
+38 → 39, orientation 38 → 40, crop IoU ≥ 0.9 37 → 39, recall 0.838 → 0.864** — the pages fixed are the dark
+low-contrast Russian pages listed below as a known gap (every 4-corner candidate was wrong; the outline was right).
++0.6 s / image on the hard set (more pages flattened).
+
+**Several outline runs (answer to 2).** MobileSAM is deterministic, so "several runs" = 10 differently prompted /
+scaled / flipped runs per page: production prompts, centre, wide spread, 4 random 5-point sets inside the text
+block, horizontal flip, input 768 and 1400 px. Consensus outlines: intersection (all runs), ≥ 80%, majority,
+union; "trimmed" = after dropping runs with IoU < 0.9 to the majority; a text-protected intersection (never removes
+an area with text); a robust per-side fit (Tukey-weighted polynomial per side, ignores spurs and notches).
+
+- Synthetic photos with ground truth (45): MobileSAM is already very precise (share of mask on the page 0.9999);
+  the only error is a slight under-coverage at the edges (recall 0.988). Mean IoU: production 0.9886 / 0.9879
+  (normal / hard), majority 0.9885 / 0.9875, **intersection 0.9839 / 0.9823 (worst)**, ≥ 80% 0.9872 / 0.9863,
+  union 0.9922 / 0.9910. Growing the production outline by 1 px at the 1000-px working scale: **0.9941 / 0.9938**
+  (2 px 0.993, 3 px 0.987).
+- Real pages: the runs agree — on 71 / 96 pages all 10 are within IoU 0.9 of their majority; production vs
+  majority mean IoU 0.993. Text cut away (pages losing > 1% of their text pixels): production 9, majority 11,
+  **intersection 37 (8 lose > 5%)**, trimmed intersection 27, ≥ 80% 17, text-protected intersection 12.
+- Outcome after flattening: M_maj vs M: 12 better / 14 worse; M_inter vs M: 15 / 20; totals within 0.3%.
+  "Majority only when the runs disagree" (stability < 0.97): 0.944 vs 0.949 — no gain. Always-intersection 0.952
+  (+28 / −22 pages vs production: churn, not a gain). Cost: +4 encoder and +9 decoder passes ≈ 3–5 s per page.
+- Visual review of the 16 pages where the consensus differs: the remaining real errors are **systematic** — the
+  outline runs onto index tabs or the edge of the stack underneath, and every run does it. Voting removes random
+  errors, not shared ones. The intersection does pull the edge in from tabs on some pages (p1750, p1829, p1895,
+  p1907, p1929) but cuts into text whenever one run is wrong (p1811, p1973, p5574, p5643, p7091). The union adds
+  desk and stack. One real rescue: p1750, where the single run had notches and the flattening bent the page
+  (48 words) and the majority outline gave a clean page (146) — rare enough to be outweighed elsewhere.
+- Robust per-side fit: smooth edges (perimeter / hull 1.02 vs 1.08), text cut 7 pages vs 9, synthetic 0.9897 —
+  but visually 2 better / 5 worse of the 8 pages it changes: the corners come from the same spilled outline, so a
+  wrong corner makes a diagonal cut through the page corner. Rejected in this form.
+
+**Answer to 2: no** — intersection is the worst variant (cuts text, shrinks the edge), and majority / trimmed
+variants equal a single run at 3–5 s extra per page. Not implemented. What would help instead: (a) grow the
+outline by ~1 px at the working scale (systematic edge loss, synthetic evidence only; not implemented);
+(b) remove the shared spill with independent geometry — robust straight-line fits to the outline sides (RANSAC)
+to place the corners, then the per-side smooth fit; or re-prompt MobileSAM with negative points on detected tabs /
+a box prompt from the agreed corners.
+
+Scripts (scratchpad, not in the repo): `exp.py` (paths + features), `masks.py` / `realeval.py` / `sidefit.py`
+(consensus), `qm.py`, `analyze4.py`.
+
 ## Known gaps / next steps
 
-- 2/40 hard-set documents are still rejected: dark, low-contrast, shadowed Russian pages where every boundary
-  candidate is wrong and OCR on them is empty. They go to the rejected area (retention), not deleted. A
+- 2/40 hard-set documents are still rejected (1/40 with branch `crop-choice-agreement`, see 2026-11-25): dark,
+  low-contrast, shadowed Russian pages where every boundary candidate is wrong and OCR on them is empty. They go to the rejected area (retention), not deleted. A
   "document-like but unreadable → review" signal (text-blob density after a correct crop) would catch them.
 - Low-light + shadow pages: recall 0.55. Cleanup variants and upscaling were tested and do not help (see 01:44 and
   01:48); the next lever is a stronger recognizer for blurry text (phase-2 PaddleOCR evaluation) or a
