@@ -149,12 +149,15 @@ def list_documents(
     if status:
         qry = qry.filter(m.Document.status.in_(status.split(",")))
     # the Status filter (named "review" in links from before it had the error state)
+    # needs review / check / OK follow the list's badge (needs_review ? "needs review" : tier), finished documents only
+    # (one being reprocessed keeps its last run's tier until it is done)
+    flagged = or_(m.Document.needs_review.is_(True), m.Document.tier == "low")
     if review == "needs_review":
-        qry = qry.filter(m.Document.needs_review.is_(True))
+        qry = qry.filter(m.Document.status == "ready", flagged)
     elif review == "check":
-        qry = qry.filter(m.Document.tier == "medium")
+        qry = qry.filter(m.Document.status == "ready", ~flagged, m.Document.tier == "medium")
     elif review == "ok":
-        qry = qry.filter(m.Document.status == "ready", m.Document.needs_review.is_(False), ~_has_error)
+        qry = qry.filter(m.Document.status == "ready", ~flagged, m.Document.tier == "high", ~_has_error)
     elif review == "error":
         qry = qry.filter(_has_error)
     elif review == "queued":
@@ -863,7 +866,7 @@ def stats(p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
                     func.count().filter(m.Document.folder_id.is_(None))).group_by(m.Document.status, trashed).all()
     live = [r for r in rows if not r[1]]
     listed = [r for r in live if r[0] != "rejected"]
-    return {"documents": {r[0]: r[2] for r in live}, "review": sum(r[3] for r in listed),
+    return {"documents": {r[0]: r[2] for r in live}, "review": sum(r[3] for r in listed if r[0] == "ready"),
             "trash": sum(r[2] for r in rows if r[1]), "unfiled": sum(r[4] for r in listed),
             "rejected_new": _rejected_new(db, p.user),
             "tag_max_length": appsettings.get(db, "tag_max_length"),
