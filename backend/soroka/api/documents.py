@@ -14,7 +14,7 @@ from .. import appsettings
 from .. import models as m
 from ..db import get_db, now
 from ..deps import Principal, admin, audit, client_ip, ui_user
-from ..jobs import enqueue_finalize, enqueue_page
+from ..jobs import enqueue_document, enqueue_finalize, enqueue_page
 from ..pipeline.recipe import apply_edit, default_recipe, normalize
 from ..search import (HIT_PARTS, build_tsquery, current_page_ids, exact_filters, exact_hit_filter, headlines_by_part,
                       index_document, locate_hits, merge_hits, phrase_match, rank, split_hits)
@@ -460,11 +460,17 @@ def rescue(doc_id: int, request: Request, p: Principal = Depends(ui_user), db: D
 def reprocess(doc_id: int, p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
     """Re-run automatic stages for all pages; manual corrections are kept."""
     d = _get_doc(db, doc_id)
-    for pid in current_page_ids(db, d):
+    pids = current_page_ids(db, d)
+    if not pids:  # the file was never split into pages (it could not be read): run the whole document again
+        d.status = "queued"
+        db.commit()
+        enqueue_document(d.id, "default")
+        return {"ok": True}
+    for pid in pids:
         db.get(m.Page, pid).status = "queued"
     d.status = "processing"
     db.commit()
-    for pid in current_page_ids(db, d):
+    for pid in pids:
         enqueue_page(pid, "quality", "default")
     return {"ok": True}
 
