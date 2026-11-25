@@ -156,16 +156,21 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const uploads = useUploads()
   const [upload, setUpload] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
-  // the File type filter offers every file type there is among the documents (fetched when the filters open)
+  // the File type filter offers every file type there is among the documents. Fetched once when the page loads, so
+  // the panel opens with its final width (the select is as wide as its longest option: filled in only after opening,
+  // it widened and the bar jumped)
   const [fileTypes, setFileTypes] = useState<{ value: string; label: string; count: number }[]>([])
-  // and again whenever documents change (trashed, deleted, arrived), so the counts stay true while the panel is open
+  const getFileTypes = useCallback(() =>
+    api<typeof fileTypes>('/api/documents/suggest?field=file_type&limit=100').then(setFileTypes).catch(() => {}), [])
+  useEffect(() => { getFileTypes() }, [getFileTypes])
+  // and again when the filters open and whenever documents change (trashed, deleted, arrived), so the counts stay
+  // true while the panel is open
   useEffect(() => {
     if (!showFilters) return
-    const get = () => api<typeof fileTypes>('/api/documents/suggest?field=file_type&limit=100').then(setFileTypes).catch(() => {})
-    get()
-    window.addEventListener('soroka:reload', get)
-    return () => window.removeEventListener('soroka:reload', get)
-  }, [showFilters, total])
+    getFileTypes()
+    window.addEventListener('soroka:reload', getFileTypes)
+    return () => window.removeEventListener('soroka:reload', getFileTypes)
+  }, [showFilters, total, getFileTypes])
   const [layout, setLayout] = useState<'grid' | 'list'>(() => { try { return (localStorage.getItem('layout') as any) || 'grid' } catch { return 'grid' } })
 
   // the list's query, without paging
