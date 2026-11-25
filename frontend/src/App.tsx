@@ -138,7 +138,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     window.clearTimeout(typing.current)
     if (!v.trim()) return leaveSearch()
     if (v.trim().length < 2) return // one character matches almost everything: wait for the second (Enter still searches)
-    typing.current = window.setTimeout(() => runSearch(v.trim()), 250)
+    // 400 ms: typed at normal speed, the word in between ("te" on the way to "test") is not searched and shown
+    typing.current = window.setTimeout(() => runSearch(v.trim()), 400)
   }
   const submit = (e: React.FormEvent) => {
     e.preventDefault()

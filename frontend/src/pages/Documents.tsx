@@ -193,6 +193,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const appliedSeq = useRef(0) // the newest answer on screen: an older one arriving later must not replace it
   const curQuery = useRef('') // search-as-you-type: an answer to a query no longer asked is dropped
   const shown = useRef<string | null>(null) // the text of the answer on screen (offset 0)
+  const shownQuery = useRef<string | null>(null) // the query the documents on screen were listed for
   // documents whose permanent deletion is under way: gone from the list at once (emptying a large trash takes a while)
   const gone = useRef<Set<number>>(new Set())
   /** offset 0: (re)load the first n documents in place of the list; offset > 0: add the next n ("Load more") */
@@ -201,12 +202,23 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     const q = query()
     curQuery.current = q
     setLoading(true)
+    // a new search (other text, or into / out of a search): what is on screen answers another question, so it goes
+    // and "Loading…" shows until the answer comes. Kept, it flashed: the plain list shown as search results, or the
+    // results for "te" (one match) still there while "test" (none) was asked. A refresh of the same query and
+    // changes to the plain list keep the documents on screen until the new answer replaces them.
+    if (offset === 0 && q !== shownQuery.current && (isSearch(q) || isSearch(shownQuery.current))) {
+      shownQuery.current = q
+      shown.current = null
+      setItems([])
+      setTotal(0)
+    }
     api(`/api/documents?${q}&offset=${offset}&limit=${n}`, { raw: true }).then((res: Response) => res.text()).then((text) => {
       // an answer to the same query is shown even when newer reloads are on their way: many uploads finishing one
       // after another each ask for a reload, and dropping all but the last kept every saved upload waiting for the
       // last one (each list request outlasted the gap to the next save)
       if (q !== curQuery.current || seq < appliedSeq.current) return
       appliedSeq.current = seq
+      shownQuery.current = q
       // same answer as what is on screen (next letter of the same word, background refresh): leave the list alone
       if (offset === 0) { if (text === shown.current) return; shown.current = text } else shown.current = null
       const r = JSON.parse(text)
@@ -384,7 +396,10 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     (params.get('folder') === 'none' ? u.folder == null : params.get('folder') ? u.folder === Number(params.get('folder')) : true) &&
     (upFilter === 'uploading' ? ['queued', 'uploading', 'saving'].includes(u.state)
       : upFilter === 'paused' ? u.state === 'paused' : upFilter === 'failed' ? u.state === 'error' : true))
-  const docsShown = upFilter ? [] : items  // the upload filters show uploads only
+  // the documents on screen answer another search than the one in the address (the first render after a new search,
+  // before fetchList has cleared them): not shown, or the old list flashed up as results of the new search
+  const stale = (() => { const q = query(); return q !== shownQuery.current && (isSearch(q) || isSearch(shownQuery.current)) })()
+  const docsShown = upFilter || stale ? [] : items  // the upload filters show uploads only
   // everything the list shows (documents loaded so far and the uploads in it): the "Select all" link and Ctrl+A
   const selectAll = () => { setSel(new Set(docsShown.map((d) => d.id))); setUpSel(new Set(upVisible.map((u) => u.id))) }
   const selectAllNow = useRef(selectAll)
@@ -664,7 +679,8 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
         </div></div>
       )}
       {upFilter && <div className="filters small">{t('up_filter_on')} <button className="link" onClick={() => setParam('upload', '')}><X size={13} /> {t('clear_selection')}</button></div>}
-      {!loading && docsShown.length === 0 && upVisible.length === 0 && <div className="page-pad muted">{t('nothing_found')}</div>}
+      {!loading && !stale && docsShown.length === 0 && upVisible.length === 0 && <div className="page-pad muted">{t('nothing_found')}</div>}
+      {(loading || stale) && searchMode && docsShown.length === 0 && <div className="page-pad muted">{t('loading')}</div>}
       {searchMode ? (
         /* search: one row per document — its card on the left, every place the words occur on the right */
         <div className="hit-rows">
@@ -695,7 +711,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
           </tbody>
         </table>
       )}
-      {!upFilter && items.length < total && <div ref={moreRef} style={{ textAlign: 'center', padding: 16 }}>
+      {!upFilter && !stale && items.length < total && <div ref={moreRef} style={{ textAlign: 'center', padding: 16 }}>
         {showMoreBtn ? <button disabled={loading} onClick={loadMore}>{t('load_more')}</button> : loading && <span className="muted small">{t('loading')}</span>}</div>}
       </div>
       {upload && <UploadModal folderId={folderId} onClose={() => setUpload(false)} />}
@@ -704,6 +720,9 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
 }
 
 /** A filter with its name in small type on the box's top border, at the left (instead of "Name: value" inside). */
+/** Whether a list query (see DocumentsPage's query()) is a search. */
+const isSearch = (s: string | null) => !!s && new URLSearchParams(s).has('q')
+
 function Field({ label, wide, children }: { label: string; wide?: boolean; children: React.ReactNode }) {
   return <span className={'flt' + (wide ? ' flt-wide' : '')}><span className="flt-label">{label}</span>{children}</span>
 }
