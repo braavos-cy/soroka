@@ -133,12 +133,47 @@ def mask_corners(polygon: np.ndarray) -> np.ndarray:
     return np.array([polygon[int(np.argmin(np.linalg.norm(polygon - r, axis=1)))] for r in rect], np.float32)
 
 
-def page_outline(img: np.ndarray) -> tuple[list | None, dict]:
+ROTATE = {90: (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE), 180: (cv2.ROTATE_180, cv2.ROTATE_180),
+          270: (cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_90_CLOCKWISE)}
+
+
+def page_outline(img: np.ndarray, rotations: tuple = (0, 90, 270)) -> tuple[list | None, dict]:
     """Editable page outline (polygon in original pixels) found by MobileSAM from the page's text block, or None
-    with the reason (no text block, implausible mask, models missing)."""
+    with the reason (no text block, implausible mask, models missing).
+
+    MobileSAM is run on the picture turned by each of `rotations` (degrees clockwise: upright, turned right, turned
+    left); each mask is turned back and the page is where at least 2 of them agree (a majority vote). A single run
+    sometimes spills from the page's side into the background (a peninsula) or leaves a hole in the page (an island);
+    the other two outvote it. A rotation that finds no outline is left out: with 2 masks left both must agree, with 1
+    it is used as it is, and there is none only if all of them fail."""
     if not available():
         return None, {"reason": "models_missing"}
     small, s = C.downscale(img, 1000)
+    masks, per_rot = [], {}
+    for rot in rotations:
+        im = small if rot == 0 else cv2.rotate(small, ROTATE[rot][0])
+        m, info = _outline_mask(im)
+        per_rot[str(rot)] = info
+        if m is not None:
+            masks.append(m if rot == 0 else cv2.rotate(m, ROTATE[rot][1]))
+    if not masks:
+        return None, {"reason": per_rot[str(rotations[0])]["reason"], "rotations": per_rot}
+    votes = np.sum([x.astype(np.uint8) for x in masks], axis=0)
+    m = _clean(votes >= 2) if len(masks) > 1 else masks[0]
+    area = float(m.mean())
+    if not 0.12 <= area <= 0.95:
+        return None, {"reason": "mask_area", "area": round(area, 3), "rotations": per_rot}
+    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    c = max(cnts, key=cv2.contourArea)
+    poly = cv2.approxPolyDP(c, 0.0025 * cv2.arcLength(c, True), True).reshape(-1, 2).astype(np.float32) / s
+    scores = [v["score"] for v in per_rot.values() if "score" in v]
+    return [[round(float(x), 1), round(float(y), 1)] for x, y in poly], {
+        "area": round(area, 3), "points": len(poly), "score": max(scores), "used": len(masks),
+        "rotations": per_rot}
+
+
+def _outline_mask(small: np.ndarray) -> tuple[np.ndarray | None, dict]:
+    """The page mask (uint8, small's size) MobileSAM finds from the text block in this orientation, or None."""
     hull = text_block(small, C._paper_view(small))
     if hull is None:
         return None, {"reason": "no_text_block"}
@@ -163,11 +198,7 @@ def page_outline(img: np.ndarray) -> tuple[list | None, dict]:
     area = float(m.mean())
     if not 0.12 <= area <= 0.95:
         return None, {"reason": "mask_area", "area": round(area, 3)}
-    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    c = max(cnts, key=cv2.contourArea)
-    poly = cv2.approxPolyDP(c, 0.0025 * cv2.arcLength(c, True), True).reshape(-1, 2).astype(np.float32) / s
-    return [[round(float(x), 1), round(float(y), 1)] for x, y in poly], {
-        "area": round(area, 3), "points": len(poly), "score": round(float(scores.max()), 3)}
+    return m, {"area": round(area, 3), "score": round(float(scores.max()), 3)}
 
 
 BEND_CURVED = 0.018  # flat test photos bend <= 0.016 of the diagonal, photographed book pages 0.02-0.12
