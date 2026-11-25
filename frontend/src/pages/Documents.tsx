@@ -193,6 +193,8 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   const appliedSeq = useRef(0) // the newest answer on screen: an older one arriving later must not replace it
   const curQuery = useRef('') // search-as-you-type: an answer to a query no longer asked is dropped
   const shown = useRef<string | null>(null) // the text of the answer on screen (offset 0)
+  // documents whose permanent deletion is under way: gone from the list at once (emptying a large trash takes a while)
+  const gone = useRef<Set<number>>(new Set())
   /** offset 0: (re)load the first n documents in place of the list; offset > 0: add the next n ("Load more") */
   const fetchList = useCallback((offset: number, n: number) => {
     const seq = ++loadSeq.current
@@ -208,9 +210,11 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
       // same answer as what is on screen (next letter of the same word, background refresh): leave the list alone
       if (offset === 0) { if (text === shown.current) return; shown.current = text } else shown.current = null
       const r = JSON.parse(text)
-      setTotal(r.total)
+      // documents being deleted stay hidden until the deletion is done (the server lists them until it commits)
+      const items = r.items.filter((d: DocSummary) => !gone.current.has(d.id))
+      setTotal(Math.max(0, r.total - (r.items.length - items.length)))
       setItems((cur) => {
-        const next = keepUnchanged(cur, r.items)
+        const next = keepUnchanged(cur, items)
         if (offset === 0) return next
         const have = new Set(cur.map((d) => d.id)) // the list may have shifted since: no document twice
         return [...cur, ...next.filter((d) => !have.has(d.id))]
@@ -421,18 +425,38 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     try { await api('/api/documents/bulk', { body: { ids: [...sel], action, ...extra } }); setSel(new Set()); load(); reload() } catch (e: any) { toast(e.detail) }
   }
   const rescue = async (id: number) => { await api(`/api/documents/${id}/rescue`, { method: 'POST' }); load(); reload() }
+  /** Permanent deletion: the documents leave the list at once and the request runs behind it (it takes a while for
+   *  many documents); on failure the list is reloaded with what is really still there. `all`: every document in the
+   *  list goes (Empty trash), also those not loaded yet. */
+  const deleteNow = async (ids: number[], request: () => Promise<unknown>, all = false) => {
+    ids.forEach((id) => gone.current.add(id))
+    shown.current = null
+    setSel(new Set())
+    const cur = itemsRef.current
+    const left = all ? [] : cur.filter((d) => !gone.current.has(d.id))
+    setItems(left)
+    setTotal((n) => all ? 0 : Math.max(0, n - (cur.length - left.length)))
+    try { await request() } catch (e: any) { toast(e.detail) }
+    ids.forEach((id) => gone.current.delete(id))
+    load(); reload()
+  }
   const purge = async (ids: number[]) => {
     if (!(await dlg.confirm({ title: t('purge') + '?', message: t('confirm_purge'), ok: t('purge'), danger: true }))) return
-    try { await api('/api/documents/purge', { body: { ids } }) } catch (e: any) { toast(e.detail) }
-    setSel(new Set()); load(); reload()
+    await deleteNow(ids, () => api('/api/documents/purge', { body: { ids } }))
   }
-  const emptyTrash = async () => { if (await dlg.confirm({ title: t('empty_trash') + '?', message: t('confirm_purge'), ok: t('empty_trash'), danger: true })) { await api('/api/trash/empty', { method: 'POST' }); load(); reload() } }
+  const emptyTrash = async () => {
+    if (!(await dlg.confirm({ title: t('empty_trash') + '?', message: t('confirm_purge'), ok: t('empty_trash'), danger: true }))) return
+    await deleteNow(itemsRef.current.map((d) => d.id), () => api('/api/trash/empty', { method: 'POST' }), true)
+  }
   const setLayoutP = (l: 'grid' | 'list') => { setLayout(l); try { localStorage.setItem('layout', l) } catch { /* */ } }
   const open = (d: DocSummary) => nav(`/doc/${d.id}${params.get('q') ? '?q=' + encodeURIComponent(params.get('q')!) : ''}`)
   const dragStart = (e: React.DragEvent, d: DocSummary) => {
     const ids = sel.has(d.id) ? [...sel] : [d.id]
     e.dataTransfer.setData(DND, JSON.stringify({ type: 'docs', ids }))
     e.dataTransfer.setData(DND_DOCS, '') // readable during the drag (data is not): lets Trash light up for documents only
+    // documents are only ever moved (to a folder, out of folders, to the trash): with every effect allowed the browser
+    // showed the "copy" cursor for a moment between two folders
+    e.dataTransfer.effectAllowed = 'move'
     // while documents are dragged the Trash tab has a larger drop area (styles: body.dragging-docs)
     document.body.classList.add('dragging-docs')
     const end = () => { document.body.classList.remove('dragging-docs'); window.removeEventListener('dragend', end, true); window.removeEventListener('drop', end, true) }
@@ -454,9 +478,6 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     // handled so the page-wide Esc (App: ends a search) does not act on the same press
     const h = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.modal-bg')) return
-    // documents are only ever moved (to a folder, out of folders, to the trash): with every effect allowed the browser
-    // showed the "copy" cursor for a moment between two folders
-    e.dataTransfer.effectAllowed = 'move'
       e.preventDefault()
       closeNow.current()
     }
