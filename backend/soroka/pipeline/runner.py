@@ -465,7 +465,7 @@ def _process_image_page(db, page: m.Page, run: PageRun, forced: bool, rescue: li
             alts = _rescue_candidates(run, rec["crop"]["quad"]) if rescue is None else rescue[1:]
             if alts:
                 return _process_image_page(db, page, run, forced, rescue=alts)
-        _acceptance_with_ocr(db, run, result)
+        _acceptance_with_ocr(db, run, result, C.paper_white(img))
 
 
 def _page_base(orig: np.ndarray, crop: dict) -> np.ndarray:
@@ -502,14 +502,23 @@ def _rescue_candidates(run: PageRun, chosen_quad: list, limit: int = 2) -> list[
     return out
 
 
-def _acceptance_with_ocr(db, run: PageRun, result: dict) -> None:
+WHITE_PAGE = 0.85  # share of white paper on the page
+WHITE_PAGE_COLOUR = 0.03  # at most this share of strongly coloured pixels
+
+
+def _acceptance_with_ocr(db, run: PageRun, result: dict, white: float = 0.0) -> None:
     st = run.stages.get("acceptance") or {}
     info = dict(st.get("info") or {})
     prior = float(info.get("score", 0.0))
     doc_t = appsettings.get(db, "accept_doc_threshold")
     n = result.get("real_words", O.real_words(result.get("words", [])))
+    # a white, colourless sheet with real words on it is a document even with very little text (an almost blank
+    # page with just "Page 2"); a colourful picture with a word or two (a brand name on a cup) is not
+    white_page = white >= WHITE_PAGE and info.get("colorfulness", 1.0) <= WHITE_PAGE_COLOUR
     if n >= 10:
         val, tier = "document", "high"
+    elif n >= 1 and white_page:
+        val, tier = "document", "medium"
     elif n <= 2:
         # text-like structure but nothing readable (very blurry / tiny text): let a human decide
         # (OCR must have seen many tokens it could not read: brick walls and stripes give none)
@@ -521,7 +530,8 @@ def _acceptance_with_ocr(db, run: PageRun, result: dict) -> None:
         val, tier = "document", "medium"
     else:
         val, tier = "uncertain", "low"
-    info.update({"value": val, "real_words": n, "prior_score": prior})
+    info.update({"value": val, "real_words": n, "prior_score": prior, "paper_white": round(white, 3),
+                 "white_page": white_page})
     run.recipe["acceptance"]["value"] = val
     run.set_auto_value("acceptance", val)
     run.record("acceptance", "done", tier, "heuristic_v2_ocr", **info)

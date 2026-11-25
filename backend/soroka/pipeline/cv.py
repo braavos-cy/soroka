@@ -867,6 +867,16 @@ def acceptance_signals(img: np.ndarray, boundary_score: float) -> dict:
             "colorfulness": round(colorful, 3), "score": round(score, 3)}
 
 
+def paper_white(img: np.ndarray) -> float:
+    """Share of the page that is white paper: bright and colourless pixels (before cleanup, which whitens any
+    background). A scan or a photo of a sheet in good light is mostly white; a photo of an object is not."""
+    small, _ = downscale(img, 800)
+    if small.ndim == 2:
+        return float((small >= 170).mean())
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    return float(((hsv[..., 2] >= 170) & (hsv[..., 1] <= 40)).mean())
+
+
 # ---------------------------------------------------------------- 5. orientation helpers
 def rotate90(img: np.ndarray, angle_cw: int) -> np.ndarray:
     a = angle_cw % 360
