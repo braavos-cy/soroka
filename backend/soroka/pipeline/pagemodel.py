@@ -137,43 +137,77 @@ ROTATE = {90: (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE), 180: (c
           270: (cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_90_CLOCKWISE)}
 
 
-def page_outline(img: np.ndarray, rotations: tuple = (0, 90, 270)) -> tuple[list | None, dict]:
-    """Editable page outline (polygon in original pixels) found by MobileSAM from the page's text block, or None
-    with the reason (no text block, implausible mask, models missing).
+AGREE_IOU = 0.95  # upright and turned right agree: no tie-breaker needed
+SUPPORT_IOU = 0.9  # a mask backs the voted outline when it overlaps it this much
 
-    MobileSAM is run on the picture turned by each of `rotations` (degrees clockwise: upright, turned right, turned
-    left); each mask is turned back and the page is where at least 2 of them agree (a majority vote). A single run
-    sometimes spills from the page's side into the background (a peninsula) or leaves a hole in the page (an island);
-    the other two outvote it. A rotation that finds no outline is left out: with 2 masks left both must agree, with 1
-    it is used as it is, and there is none only if all of them fail."""
+
+def _iou(a: np.ndarray, b: np.ndarray) -> float:
+    return float((a & b).sum() / max(1, (a | b).sum()))
+
+
+def page_outline(img: np.ndarray, rotations: tuple | None = None) -> tuple[list | None, dict]:
+    """Editable page outline (polygon in original pixels) found by MobileSAM from the page's text block, or None
+    with the reason (no text block, no agreement, outline covering almost the whole picture, models missing).
+
+    MobileSAM is not rotation-invariant: the same photo turned 90 degrees can be outlined differently (upright it
+    sometimes spills from the page's side into the background, a peninsula, or leaves a hole in it, an island). It is
+    run on the picture upright and turned right; when the two masks agree, that is the page (2 runs). Otherwise it
+    also runs turned left and upside down, and the page is where at least 3 of the 4 masks agree (2 of 3 when one
+    turn found no text to start from). With no clear majority (most masks far from the voted outline) there is no
+    outline and the regular 4-corner crop stays. Each run hands in its best mask, also one covering nearly the whole
+    picture, so the vote sees what every orientation saw. `rotations`: run exactly these (evaluation scripts)."""
     if not available():
         return None, {"reason": "models_missing"}
     small, s = C.downscale(img, 1000)
-    masks, per_rot = [], {}
-    for rot in rotations:
+    found, per_rot = {}, {}
+
+    def run(rot: int) -> None:
         im = small if rot == 0 else cv2.rotate(small, ROTATE[rot][0])
         m, info = _outline_mask(im)
         per_rot[str(rot)] = info
         if m is not None:
-            masks.append(m if rot == 0 else cv2.rotate(m, ROTATE[rot][1]))
+            found[rot] = (m if rot == 0 else cv2.rotate(m, ROTATE[rot][1])).astype(bool)
+
+    if rotations is not None:
+        for rot in rotations:
+            run(rot)
+        agreed = False
+    else:
+        run(0)
+        run(90)
+        agreed = 0 in found and 90 in found and _iou(found[0], found[90]) >= AGREE_IOU
+        if not agreed:
+            run(270)
+            run(180)
+    masks = list(found.values())
+    info = {"rotations": per_rot, "runs": len(per_rot), "agreed": agreed}
     if not masks:
-        return None, {"reason": per_rot[str(rotations[0])]["reason"], "rotations": per_rot}
-    votes = np.sum([x.astype(np.uint8) for x in masks], axis=0)
-    m = _clean(votes >= 2) if len(masks) > 1 else masks[0]
+        return None, {"reason": per_rot[str(next(iter(per_rot)))]["reason"], **info}
+    if len(masks) == 1:  # the other turns found no text to start from: nothing against this one
+        m = masks[0].astype(np.uint8)
+    else:
+        need = 3 if len(masks) >= 4 else 2
+        m = _clean(np.sum(masks, axis=0) >= need)
+        support = sum(_iou(x, m.astype(bool)) >= SUPPORT_IOU for x in masks)
+        info["support"] = f"{support}/{len(masks)}"
+        if support < need:  # the masks split (e.g. 2 against 2): none of them is trusted
+            return None, {"reason": "no_agreement", **info}
     area = float(m.mean())
+    # nearly the whole picture: the page fills the frame, the regular crop already has it
     if not 0.12 <= area <= 0.95:
-        return None, {"reason": "mask_area", "area": round(area, 3), "rotations": per_rot}
+        return None, {"reason": "mask_area", "area": round(area, 3), **info}
     cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     c = max(cnts, key=cv2.contourArea)
     poly = cv2.approxPolyDP(c, 0.0025 * cv2.arcLength(c, True), True).reshape(-1, 2).astype(np.float32) / s
     scores = [v["score"] for v in per_rot.values() if "score" in v]
     return [[round(float(x), 1), round(float(y), 1)] for x, y in poly], {
-        "area": round(area, 3), "points": len(poly), "score": max(scores), "used": len(masks),
-        "rotations": per_rot}
+        "area": round(area, 3), "points": len(poly), "score": max(scores), "used": len(masks), **info}
 
 
 def _outline_mask(small: np.ndarray) -> tuple[np.ndarray | None, dict]:
-    """The page mask (uint8, small's size) MobileSAM finds from the text block in this orientation, or None."""
+    """The page mask (uint8, small's size) MobileSAM finds from the text block in this orientation, or None when there
+    is no text to start from or no mask holds most of it. The largest mask that holds the text block is taken, also
+    one covering nearly the whole picture: whether that is the page or the whole photo is for the vote to decide."""
     hull = text_block(small, C._paper_view(small))
     if hull is None:
         return None, {"reason": "no_text_block"}
@@ -185,18 +219,18 @@ def _outline_mask(small: np.ndarray) -> tuple[np.ndarray | None, dict]:
     cv2.fillPoly(tb, [hull.astype(np.int32)], 1)
     best = None
     covers = [float((m & tb.astype(bool)).sum() / max(1, tb.sum())) for m in masks]
-    for m, cover in zip(masks, covers):  # the largest candidate that contains the text block, not the whole photo
-        if cover > 0.95 and m.mean() < 0.92 and (best is None or m.sum() > best.sum()):
+    for m, cover in zip(masks, covers):  # the largest candidate that contains the text block
+        if cover > 0.95 and (best is None or m.sum() > best.sum()):
             best = m
     if best is None:  # else MobileSAM's own best guess, if it still holds most of the text
         i = int(np.argmax(scores))
-        if covers[i] >= 0.8 and masks[i].mean() < 0.92:
+        if covers[i] >= 0.8:
             best = masks[i]
     if best is None:
         return None, {"reason": "no_plausible_mask", "scores": [round(float(v), 3) for v in scores]}
     m = _clean(_drop_colour(best, small))
     area = float(m.mean())
-    if not 0.12 <= area <= 0.95:
+    if area < 0.12:
         return None, {"reason": "mask_area", "area": round(area, 3)}
     return m, {"area": round(area, 3), "score": round(float(scores.max()), 3)}
 
