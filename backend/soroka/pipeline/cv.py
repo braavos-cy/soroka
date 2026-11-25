@@ -237,8 +237,11 @@ def _looks_flat_scan(small: np.ndarray) -> float:
     h, w = g.shape
     bw = max(3, int(min(h, w) * 0.03))
     strips = [g[:bw], g[-bw:], g[:, :bw], g[:, -bw:]]
-    light = np.mean([float(s.mean()) > 170 for s in strips])
-    uniform = np.mean([float(s.std()) < 35 for s in strips])
+    # pure digital black along an edge (a scanner's edge, padding) counts as a scan's border: no photo is that flat,
+    # sensor noise alone is more. A scan with a black bar at the bottom read as a photo and was outlined by MobileSAM.
+    black = [float(s.mean()) < 15 and float(s.std()) < 5 for s in strips]
+    light = np.mean([float(s.mean()) > 170 or k for s, k in zip(strips, black)])
+    uniform = np.mean([float(s.std()) < 35 or k for s, k in zip(strips, black)])
     return float(0.5 * light + 0.5 * uniform)
 
 
