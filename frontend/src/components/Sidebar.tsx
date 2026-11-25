@@ -127,9 +127,20 @@ export default function Sidebar() {
       reload(); window.dispatchEvent(new Event('soroka:reload'))
     } catch (err: any) { toast(err.detail) }
   }
+  // enter and over must both accept the drag, also when they come from the row's icon or label: an unaccepted
+  // dragenter shows the "no drop" cursor for a moment (the flicker). Leaving into the row's own parts is not leaving.
+  const accept = (e: React.DragEvent) => {
+    e.preventDefault()  // also for files from the computer: refused here, and the browser must not open them instead
+    if (!Array.from(e.dataTransfer.types).includes(DND)) { e.dataTransfer.dropEffect = 'none'; return }
+    e.dataTransfer.dropEffect = 'move'
+    ;(e.currentTarget as HTMLElement).classList.add('drop')
+  }
   const dropProps = (target: number | 'none' | null) => ({
-    onDragOver: (e: React.DragEvent) => { e.preventDefault(); (e.currentTarget as HTMLElement).classList.add('drop') },
-    onDragLeave: (e: React.DragEvent) => (e.currentTarget as HTMLElement).classList.remove('drop'),
+    onDragEnter: accept,
+    onDragOver: accept,
+    onDragLeave: (e: React.DragEvent) => {
+      if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) (e.currentTarget as HTMLElement).classList.remove('drop')
+    },
     onDrop: (e: React.DragEvent) => onDrop(e, target),
   })
 
@@ -142,7 +153,7 @@ export default function Sidebar() {
         <div key={f.id}>
           <div className={'tree-item' + (onDocs && sel === f.id ? ' sel' : '') + (isEditing ? ' editing' : '')} style={{ paddingLeft: 4 + depth * 16 }}
             onClick={() => !isEditing && selectFolder(f.id)} onDoubleClick={() => !isEditing && kids.length > 0 && setOpen({ ...open, [f.id]: !isOpen })} draggable={!isEditing}
-            onDragStart={(e) => e.dataTransfer.setData(DND, JSON.stringify({ type: 'folder', id: f.id }))} {...dropProps(f.id)}>
+            onDragStart={(e) => { e.dataTransfer.setData(DND, JSON.stringify({ type: 'folder', id: f.id })); e.dataTransfer.effectAllowed = 'move' }} {...dropProps(f.id)}>
             <span className="caret" onClick={(e) => { e.stopPropagation(); setOpen({ ...open, [f.id]: !isOpen }) }}>
               {kids.length > 0 && (isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
             </span>

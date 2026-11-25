@@ -454,6 +454,9 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
     // handled so the page-wide Esc (App: ends a search) does not act on the same press
     const h = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.modal-bg')) return
+    // documents are only ever moved (to a folder, out of folders, to the trash): with every effect allowed the browser
+    // showed the "copy" cursor for a moment between two folders
+    e.dataTransfer.effectAllowed = 'move'
       e.preventDefault()
       closeNow.current()
     }
