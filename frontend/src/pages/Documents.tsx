@@ -9,7 +9,7 @@ import UploadModal, { checkItems, dragVerdict, itemsFromDrop, skippedMessage, to
 import { fmtMB, UpTask, useUploads } from '../components/uploads'
 import { DateRangeFilter, FileName, FolderMenu, fmtDate, PageThumb, Snippet, TagAdder, TagChips, TierBadge } from '../components/Pickers'
 import { Combo, Select, useDialog } from '../components/ui'
-import { ArchiveRestore, ArrowDownWideNarrow, ArrowUpNarrowWide, Ban, Files, Download, LayoutGrid, List, Pause, Play, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
+import { ArchiveRestore, ArrowDownWideNarrow, ArrowUpNarrowWide, Ban, Files, Download, LayoutGrid, List, Pause, Play, RefreshCw, SlidersHorizontal, TagIcon, Tags, Trash2, Upload as UploadIcon, X } from 'lucide-react'
 
 const PAGE = 60
 const AUTO_MAX = 200 // documents loaded by scrolling alone; beyond that the Load more button
@@ -597,6 +597,7 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
             <TagAdder exclude={[]} icon={<TagIcon size={16} />} label={t('sel_tag_add')} onAdd={(id) => bulk('tag_add', { tag_ids: [id] })} />
             <TagAdder exclude={[]} icon={<Tags size={16} />} label={t('sel_tag_remove')} noCreate onAdd={(id) => bulk('tag_remove', { tag_ids: [id] })} />
             <button onClick={() => downloadPost('/api/documents/download-zip', { ids: [...sel], kind: 'pdf' }, 'documents.zip')}><Download size={16} /> <span>{t('sel_zip')}</span></button>
+            <button onClick={() => bulk('reprocess')} title={t('reprocess')}><RefreshCw size={16} /> <span>{t('sel_reprocess')}</span></button>
             <button className="danger" onClick={() => bulk('trash')}><Trash2 size={16} /> <span>{t('to_trash')}</span></button>
           </>}
           {view === 'trash' && sel.size > 0 && <button onClick={() => bulk('restore')}><ArchiveRestore size={16} /> <span>{t('restore')}</span></button>}
@@ -719,10 +720,10 @@ export default function DocumentsPage({ view }: { view: 'active' | 'rejected' | 
   )
 }
 
-/** A filter with its name in small type on the box's top border, at the left (instead of "Name: value" inside). */
 /** Whether a list query (see DocumentsPage's query()) is a search. */
 const isSearch = (s: string | null) => !!s && new URLSearchParams(s).has('q')
 
+/** A filter with its name in small type on the box's top border, at the left (instead of "Name: value" inside). */
 function Field({ label, wide, children }: { label: string; wide?: boolean; children: React.ReactNode }) {
   return <span className={'flt' + (wide ? ' flt-wide' : '')}><span className="flt-label">{label}</span>{children}</span>
 }

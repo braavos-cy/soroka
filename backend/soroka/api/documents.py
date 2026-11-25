@@ -365,7 +365,7 @@ def update_document(doc_id: int, body: DocPatch, request: Request, p: Principal 
 
 class BulkIn(BaseModel):
     ids: list[int]
-    action: str  # move | tag_add | tag_remove | trash | restore
+    action: str  # move | tag_add | tag_remove | trash | restore | reprocess
     folder_id: int | None = None
     unfile: bool = False  # move: out of every folder ("Not in folders") instead of into folder_id
     tag_ids: list[int] = []
@@ -415,6 +415,12 @@ def bulk(body: BulkIn, request: Request, p: Principal = Depends(ui_user), db: DB
         db.commit()
         for d in docs:  # continue where it stopped: finished pages are kept
             resume_processing(db, d)
+    elif body.action == "reprocess":  # re-run the automatic stages of every selected document (not in the trash)
+        jobs = [j for d in docs if d.trashed_at is None for j in _mark_reprocess(db, d)]
+        db.commit()
+        # a few documents right away; a large selection goes to the backlog, so live uploads and edits come first
+        _enqueue_reprocess(jobs, "default" if len(jobs) <= 20 else "low")
+        return {"ok": True, "count": sum(1 for d in docs if d.trashed_at is None)}
     else:
         raise HTTPException(400, "bad_action")
     db.flush()
@@ -460,19 +466,29 @@ def rescue(doc_id: int, request: Request, p: Principal = Depends(ui_user), db: D
 def reprocess(doc_id: int, p: Principal = Depends(ui_user), db: DB = Depends(get_db)):
     """Re-run automatic stages for all pages; manual corrections are kept."""
     d = _get_doc(db, doc_id)
+    jobs = _mark_reprocess(db, d)
+    db.commit()
+    _enqueue_reprocess(jobs, "default")
+    return {"ok": True}
+
+
+def _mark_reprocess(db: DB, d: m.Document) -> list[tuple[str, int]]:
+    """Marks a document for re-running its automatic stages (manual corrections are kept) and returns the jobs to
+    queue once that is committed: one per page, or the whole document when the file was never split into pages
+    (it could not be read)."""
     pids = current_page_ids(db, d)
-    if not pids:  # the file was never split into pages (it could not be read): run the whole document again
+    if not pids:
         d.status = "queued"
-        db.commit()
-        enqueue_document(d.id, "default")
-        return {"ok": True}
+        return [("document", d.id)]
     for pid in pids:
         db.get(m.Page, pid).status = "queued"
     d.status = "processing"
-    db.commit()
-    for pid in pids:
-        enqueue_page(pid, "quality", "default")
-    return {"ok": True}
+    return [("page", pid) for pid in pids]
+
+
+def _enqueue_reprocess(jobs: list[tuple[str, int]], priority: str) -> None:
+    for kind, i in jobs:
+        enqueue_document(i, priority) if kind == "document" else enqueue_page(i, "quality", priority)
 
 
 @router.delete("/documents/{doc_id}")
